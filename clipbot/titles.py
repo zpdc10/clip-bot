@@ -58,13 +58,27 @@ _NUM = re.compile(r"\d+")
 _LM = wordninja.DEFAULT_LANGUAGE_MODEL
 _MAXLEN = max(_LM._maxword, max(len(k) for k in VOCAB))
 _VOCAB_COST = 1.0           # cheaper than any English word, so CS2 terms win ties
+_PLURAL_COST = 1.0         # extra cost of a plural the word list doesn't have
 _UNKNOWN_CHAR_COST = 30.0   # per character for something we can't recognise at all
 
 
+def _plural_of(piece: str) -> str | None:
+    """The CS2 term a plural like "deags" or "awps" comes from, or None."""
+    if len(piece) > 2 and piece.endswith("s") and piece[:-1] in VOCAB:
+        return piece[:-1]
+    return None
+
+
 def _cost(piece: str) -> float:
-    if piece in VOCAB or _KILLS.fullmatch(piece) or _CLUTCH.fullmatch(piece):
+    if piece in VOCAB or _KILLS.fullmatch(piece) or _CLUTCH.fullmatch(piece) or _plural_of(piece):
         return _VOCAB_COST
     c = _LM._wordcost.get(piece)
+    # wordninja's word list leaves out many plurals ("taps"), which would split as "tap s".
+    # Treat word + "s" as nearly as cheap as the word itself.
+    if piece.endswith("s") and len(piece) > 2:
+        stem = _LM._wordcost.get(piece[:-1])
+        if stem is not None and (c is None or stem + _PLURAL_COST < c):
+            c = stem + _PLURAL_COST
     if c is not None:
         return c
     if _NUM.fullmatch(piece):
@@ -109,6 +123,9 @@ def _merge_singles(words: list[str]) -> list[str]:
 def _fmt(word: str) -> str:
     if word in VOCAB:
         return VOCAB[word]
+    base = _plural_of(word)
+    if base:
+        return VOCAB[base] + "s"
     if _KILLS.fullmatch(word):
         return word.upper()
     if _CLUTCH.fullmatch(word):

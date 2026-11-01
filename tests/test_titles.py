@@ -38,3 +38,16 @@ def test_make_title_uses_ai_when_available(monkeypatch):
 def test_slang_words():
     assert titles.rule_title("1v4deagclutchmirage") == "1v4 Deagle Clutch Mirage"
     assert titles.rule_title("1v4notimesadge") == "1v4 No Time Sadge"
+
+
+@pytest.mark.parametrize("name,title", [
+    ("2deagsmirage", "2 Deagles Mirage"),
+    ("awpsonly", "AWPs Only"),
+    ("3kdeags", "3K Deagles"),
+    ("acesoninferno", "ACEs On Inferno"),
+    ("deags", "Deagles"),
+    ("taps", "Taps"),
+    ("uspheadtaps", "USP Head Taps"),
+])
+def test_plurals_of_cs2_terms(name, title):
+    assert titles.rule_title(name) == title
