@@ -122,3 +122,47 @@ def test_logs_and_health(env):
     logbuffer.LINES.append("2026-11-01 INFO clipbot: hello from the log")
     assert b"hello from the log" in client.get("/logs").data
     assert client.get("/healthz").json == {"ok": True}
+
+
+def test_swipe_review_flow(env, tmp_path):
+    client, state, data = env
+    out = tmp_path / "1.mp4"
+    out.write_bytes(b"video")
+    a = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
+    b = state.enqueue("b", "anubisaflash.mp4", 1)
+    for c in (a, b):
+        state.set_status(c.id, "rendered", output_path=str(out))
+    state.set_title(a.id, "Mirage 1v3 clutch")
+
+    page = client.get("/review")
+    assert page.status_code == 200 and b"Approval is off" in page.data
+    client.post("/review/require-approval")
+    assert config.load(data).require_approval is True
+    assert b"Approval is off" not in client.get("/review").data
+    assert b"Swipe to review 2 clips" in client.get("/").data
+
+    q = client.get("/review/queue").json
+    assert [c["id"] for c in q["clips"]] == [a.id, b.id]
+    assert q["clips"][0]["title"] == "Mirage 1v3 clutch"
+    assert q["clips"][1]["title"]  # untitled clips get a filename-based suggestion
+
+    def act(clip_id, **body):
+        return client.post(f"/clips/{clip_id}/review", json=body)
+
+    assert act(a.id, action="approve", title="  ").status_code == 400
+    assert act(a.id, action="approve", title="Edited title").json == {"ok": True}
+    assert state.get(a.id).approved and state.get(a.id).title == "Edited title"
+    assert act(b.id, action="skip").status_code == 200
+    assert state.get(b.id).status == "skipped"
+    assert client.get("/review/queue").json["clips"] == []
+
+    act(a.id, action="undo")
+    act(b.id, action="undo")
+    assert not state.get(a.id).approved and state.get(b.id).status == "rendered"
+    assert len(client.get("/review/queue").json["clips"]) == 2
+
+    state.mark_uploaded(a.id, "vid", 1.0)
+    assert act(a.id, action="undo").status_code == 409
+    assert act(a.id, action="skip").status_code == 409
+    assert act(b.id, action="dance").status_code == 400
+    assert act(999, action="skip").status_code == 404

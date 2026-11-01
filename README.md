@@ -61,6 +61,7 @@ Env vars set the defaults. `DATA_DIR/settings.json` overrides them and is re-rea
 The UI runs on port `8765` (set with `WEB_PORT`). Open `http://<unraid-ip>:8765`. It has no login, so keep it on your LAN and don't port-forward it.
 
 - **Clips**: everything the bot has seen, with status filters. You can edit a title before it uploads, preview the rendered Short, and approve, retry, re-render, or skip a clip.
+- **Review** (built for phones): a full-screen feed of rendered clips waiting for approval. Swipe right to post (you get a box to check or edit the title first), swipe left to skip, swipe up for the next clip. Tap pauses, and Undo appears for a few seconds after each swipe. Turn on `require_approval` for this to matter; with it on, at least 10 clips are kept rendered and ready to review.
 - **Settings**: every setting in the table below. Changes are saved to `settings.json` and apply on the next scan. Once you save from the UI, those values win over the container's env vars.
 - **YouTube**: upload your OAuth client JSON and sign in, with step-by-step instructions.
 
