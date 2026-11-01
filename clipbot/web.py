@@ -425,11 +425,10 @@ YOUTUBE = """
 <div class="card"><h3 style="margin-top:0">1. Google OAuth client</h3>
 {% if has_secret %}<p>✓ OAuth client saved.</p>{% endif %}
 <details {{ 'open' if not has_secret }}><summary>How to get one (about 5 minutes, one time)</summary><ol>
-<li>Open <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a> and create a project (any name).</li>
-<li>Enable the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">YouTube Data API v3</a> for it.</li>
-<li>Open <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">OAuth consent screen</a>, choose <b>External</b>, and fill in the app name and your email. Add the Google account that owns your channel as a test user.
-Then click <b>Publish app</b>. Apps left in “Testing” lose their sign-in every 7 days. Google won't review it, because you're the only user.</li>
-<li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credentials</a>, choose <b>Create credentials → OAuth client ID</b>, set the type to <b>Desktop app</b>, then click <b>Download JSON</b>.</li>
+<li>In <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud Console</a>, create a <b>new</b> project just for this bot, so changes can't affect other apps.</li>
+<li>Enable the <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">YouTube Data API v3</a> in it.</li>
+<li>Open <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Google Auth Platform</a>. Under <b>Branding</b>, set an app name and your email. Under <b>Audience</b>, choose External, add the Google account that owns your channel as a test user, then click <b>Publish app</b>. Apps left in “Testing” lose their sign-in every 7 days. You don't need Google's review, because you're the only user.</li>
+<li>Under <b>Clients</b>, choose <b>Create client</b>, set the type to <b>Desktop app</b>, and download the JSON.</li>
 </ol></details>
 <form method="post" action="{{ url_for('upload_secret') }}" enctype="multipart/form-data" class="actions">
 <input type="file" name="file" accept=".json,application/json"><button>{{ 'Replace' if has_secret else 'Upload' }} client JSON</button></form></div>
