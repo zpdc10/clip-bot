@@ -117,6 +117,10 @@ class State:
         )
         self._db.commit()
 
+    def last_upload_at(self) -> float | None:
+        row = self._db.execute("SELECT MAX(uploaded_at) FROM clips").fetchone()
+        return row[0]
+
     def uploads_since(self, since: float) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM clips WHERE uploaded_at >= ?", (since,)).fetchone()
         return row[0]

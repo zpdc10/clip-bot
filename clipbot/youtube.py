@@ -107,8 +107,11 @@ def credentials(data: Path):
 
 
 def upload(data: Path, video: Path, title: str, description: str, tags: list[str],
-           privacy: str, category_id: str = "20") -> str:
-    """Upload a video and return its YouTube id. Category 20 is Gaming."""
+           privacy: str, max_mbps: float = 0.0, category_id: str = "20") -> str:
+    """Upload a video and return its YouTube id. Category 20 is Gaming.
+    max_mbps > 0 limits the average upload speed (megabits per second)."""
+    import time
+
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
@@ -125,11 +128,22 @@ def upload(data: Path, video: Path, title: str, description: str, tags: list[str
             "selfDeclaredMadeForKids": False,
         },
     }
-    media = MediaFileUpload(str(video), mimetype="video/mp4", chunksize=8 * 1024 * 1024, resumable=True)
+    # Smaller chunks when throttled so the pacing is smooth (must be a multiple of 256 KB).
+    chunk = 1024 * 1024 if max_mbps > 0 else 8 * 1024 * 1024
+    media = MediaFileUpload(str(video), mimetype="video/mp4", chunksize=chunk, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
+    started = time.monotonic()
     while response is None:
         status, response = request.next_chunk(num_retries=3)
         if status:
             log.debug("upload %s: %d%%", video.name, int(status.progress() * 100))
+            if max_mbps > 0:
+                time.sleep(throttle_delay(status.resumable_progress, time.monotonic() - started, max_mbps))
     return response["id"]
+
+
+def throttle_delay(bytes_sent: int, elapsed: float, max_mbps: float) -> float:
+    """Seconds to wait so the average speed so far stays at or under max_mbps."""
+    target = bytes_sent * 8 / (max_mbps * 1_000_000)
+    return max(0.0, target - elapsed)

@@ -42,6 +42,9 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `upload_enabled` | `UPLOAD_ENABLED` | `true` | Turn uploading off without stopping renders |
 | `require_approval` | `REQUIRE_APPROVAL` | `false` | Rendered clips wait for **Approve** in the web UI |
 | `privacy` | `PRIVACY` | `private` | `private`, `unlisted` or `public` |
+| `post_interval_minutes` | `POST_INTERVAL_MINUTES` | `120` | Minimum minutes between uploads, so posts are spread out. `0` = no gap |
+| `post_window` | `POST_WINDOW` | empty | Only post during this local time window, e.g. `16:00-23:00` (can wrap past midnight). Uses the container's `TZ` |
+| `upload_limit_mbps` | `UPLOAD_LIMIT_MBPS` | `0` | Upload speed limit in Mbps. `0` = unlimited |
 | `daily_upload_limit` | `DAILY_UPLOAD_LIMIT` | `10` | Uploads per rolling 24 h (the API allows 100); `0` = no cap |
 | `title_template` | `TITLE_TEMPLATE` | `{title}` | Wraps the generated title, e.g. `{title} #shorts` |
 | `description_template` | `DESCRIPTION_TEMPLATE` | `{title}\n\n#cs2 #counterstrike #shorts` | `{title}` and `{filename}` available |

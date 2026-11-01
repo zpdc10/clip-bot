@@ -23,7 +23,7 @@ def test_uploads_with_title_description_and_privacy(tmp_path):
     state, (cid,) = setup(tmp_path)
     calls = []
 
-    def fake_upload(data, video, title, description, tags, privacy):
+    def fake_upload(data, video, title, description, tags, privacy, mbps):
         calls.append((video.name, title, description, tags, privacy))
         return "abc123"
 
@@ -46,7 +46,7 @@ def test_waits_when_not_signed_in(tmp_path):
 def test_daily_limit(tmp_path):
     state, ids = setup(tmp_path, n=3)
     t = {"now": 1_000_000.0}
-    cfg = Config(daily_upload_limit=2)
+    cfg = Config(daily_upload_limit=2, post_interval_minutes=0)
     up = lambda *a: "vid"
     clock = lambda: t["now"]
     assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 1
@@ -110,8 +110,8 @@ def test_rendered_file_deleted_after_upload_unless_kept(tmp_path):
     state, (a, b) = setup(tmp_path, n=2)
     for cid in (a, b):
         open(state.get(cid).output_path, "wb").write(b"x")
-    process_rendered(state, Config(), tmp_path, upload_fn=lambda *x: "v")
-    process_rendered(state, Config(keep_rendered=True), tmp_path, upload_fn=lambda *x: "v")
+    process_rendered(state, Config(post_interval_minutes=0), tmp_path, upload_fn=lambda *x: "v")
+    process_rendered(state, Config(keep_rendered=True, post_interval_minutes=0), tmp_path, upload_fn=lambda *x: "v")
     from pathlib import Path
     assert not Path(state.get(a).output_path).exists()
     assert Path(state.get(b).output_path).exists()
@@ -150,3 +150,48 @@ def test_edited_title_is_used(tmp_path):
     seen = []
     process_rendered(state, Config(), tmp_path, upload_fn=lambda d, v, t, *a: seen.append(t) or "v")
     assert seen == ["My own title"]
+
+
+def test_post_interval_spaces_uploads(tmp_path):
+    state, ids = setup(tmp_path, n=2)
+    t = {"now": 1_000_000.0}
+    clock = lambda: t["now"]
+    cfg = Config(post_interval_minutes=90)
+    up = lambda *a: "v"
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 1
+    t["now"] += 89 * 60
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 0
+    t["now"] += 60
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 1
+
+
+def test_post_window(tmp_path, monkeypatch):
+    import time as _time
+
+    monkeypatch.setenv("TZ", "UTC")
+    _time.tzset()
+    state, (cid,) = setup(tmp_path)
+    up = lambda *a: "v"
+    noon = 1_700_000_000 - (1_700_000_000 % 86400) + 12 * 3600  # 12:00 UTC
+    assert process_rendered(state, Config(post_window="16:00-23:00"), tmp_path, upload_fn=up, clock=lambda: noon) == 0
+    assert process_rendered(state, Config(post_window="22:00-13:00"), tmp_path, upload_fn=up, clock=lambda: noon) == 1
+
+
+def test_speed_limit_is_passed_and_paced():
+    from clipbot.youtube import throttle_delay
+
+    assert throttle_delay(10_000_000, 4.0, 10) == 4.0  # 80 Mbit at 10 Mbps needs 8 s
+    assert throttle_delay(10_000_000, 9.0, 10) == 0.0
+
+
+def test_parse_window():
+    import pytest
+    from clipbot.config import in_window, parse_window
+
+    assert parse_window("") is None
+    assert parse_window("16:00-23:30") == (960, 1410)
+    w = parse_window("22-2")
+    assert in_window(w, 23 * 60) and in_window(w, 60) and not in_window(w, 12 * 60)
+    for bad in ["nope", "25:00-1:00", "10:00-10:00"]:
+        with pytest.raises(ValueError):
+            parse_window(bad)
