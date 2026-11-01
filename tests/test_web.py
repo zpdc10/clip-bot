@@ -166,3 +166,14 @@ def test_swipe_review_flow(env, tmp_path):
     assert act(a.id, action="skip").status_code == 409
     assert act(b.id, action="dance").status_code == 400
     assert act(999, action="skip").status_code == 404
+
+
+def test_warns_when_uploads_are_not_public(env):
+    client, state, tmp_path = env
+    (tmp_path / youtube.TOKEN_FILE).write_text("{}")
+    c = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
+    state.mark_uploaded(c.id, "vid1", 1.0, "private")
+    page = client.get("/").data
+    assert b"get no views" in page and b"vid1" in page
+    (tmp_path / config.SETTINGS_FILE).write_text(json.dumps({"privacy": "public"}))
+    assert b"get no views" not in client.get("/").data
