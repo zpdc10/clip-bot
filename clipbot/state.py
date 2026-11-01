@@ -41,6 +41,8 @@ class Clip:
     uploaded_at: float | None = None
     approved: bool = False
     created_at: float = 0.0
+    attempts: int = 0
+    retry_at: float | None = None
 
 
 class State:
@@ -56,7 +58,8 @@ class State:
     def _migrate(self) -> None:
         cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
         for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL"),
-                         ("approved", "INTEGER NOT NULL DEFAULT 0")):
+                         ("approved", "INTEGER NOT NULL DEFAULT 0"),
+                         ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("retry_at", "REAL")):
             if col not in cols:
                 self._db.execute(f"ALTER TABLE clips ADD COLUMN {col} {typ}")
 
@@ -106,7 +109,8 @@ class State:
 
     def mark_uploaded(self, clip_id: int, video_id: str, when: float) -> None:
         self._db.execute(
-            "UPDATE clips SET status = 'uploaded', video_id = ?, uploaded_at = ?, error = NULL, updated_at = ?"
+            "UPDATE clips SET status = 'uploaded', video_id = ?, uploaded_at = ?, error = NULL, retry_at = NULL,"
+            " updated_at = ?"
             " WHERE id = ?",
             (video_id, when, time.time(), clip_id),
         )
@@ -115,6 +119,20 @@ class State:
     def uploads_since(self, since: float) -> int:
         row = self._db.execute("SELECT COUNT(*) FROM clips WHERE uploaded_at >= ?", (since,)).fetchone()
         return row[0]
+
+    def schedule_retry(self, clip_id: int, retry_at: float, error: str, count_attempt: bool = True) -> None:
+        """Keep a clip 'rendered' but don't try it again before retry_at."""
+        self._db.execute(
+            "UPDATE clips SET status = 'rendered', error = ?, retry_at = ?, attempts = attempts + ?, updated_at = ?"
+            " WHERE id = ?",
+            (error, retry_at, int(count_attempt), time.time(), clip_id),
+        )
+        self._db.commit()
+
+    def reset_attempts(self, clip_id: int) -> None:
+        self._db.execute("UPDATE clips SET attempts = 0, retry_at = NULL, updated_at = ? WHERE id = ?",
+                         (time.time(), clip_id))
+        self._db.commit()
 
     def set_approved(self, clip_id: int, approved: bool = True) -> None:
         self._db.execute("UPDATE clips SET approved = ?, updated_at = ? WHERE id = ?",
@@ -158,4 +176,6 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         uploaded_at=row["uploaded_at"],
         approved=bool(row["approved"]),
         created_at=row["created_at"],
+        attempts=row["attempts"],
+        retry_at=row["retry_at"],
     )

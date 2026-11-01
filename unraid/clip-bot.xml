@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>clip-bot</Name>
+  <Repository>ghcr.io/zpdc10/clip-bot:latest</Repository>
+  <Registry>https://github.com/zpdc10/clip-bot/pkgs/container/clip-bot</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/zpdc10/clip-bot</Support>
+  <Project>https://github.com/zpdc10/clip-bot</Project>
+  <Overview>Watches a folder of exported gaming clips, crops them to vertical 1080x1920 Shorts, titles them from the filename and uploads them to YouTube. Web UI for settings, the clip queue and YouTube sign-in.</Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8765]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/google/material-design-icons/master/png/av/movie/materialicons/48dp/2x/baseline_movie_black_48dp.png</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <Config Name="Clips folder" Target="/clips" Default="/mnt/user/clips/" Mode="ro" Description="The share SteelSeries Moments clips are exported to. Read-only: the bot never changes your originals." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/clips/</Config>
+  <Config Name="App data" Target="/data" Default="/mnt/user/appdata/clip-bot/" Mode="rw" Description="Settings, queue database, YouTube sign-in and rendered Shorts." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/clip-bot/</Config>
+  <Config Name="Web UI port" Target="8765" Default="8765" Mode="tcp" Description="LAN only. Don't port-forward it; it has no login." Type="Port" Display="always" Required="true" Mask="false">8765</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User id files are written as (99 = nobody)." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group id files are written as (100 = users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Time zone" Target="TZ" Default="America/New_York" Mode="" Description="For timestamps in the web UI and logs." Type="Variable" Display="advanced" Required="false" Mask="false">America/New_York</Config>
+</Container>
