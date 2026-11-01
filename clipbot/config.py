@@ -49,6 +49,8 @@ class Config:
     # x264 quality, lower is better (18-23 is sensible) and preset (slower = smaller file).
     crf: int = 20
     x264_preset: str = "medium"
+    # Render at most this many clips ahead of the uploader (0 = render everything right away).
+    render_ahead: int = 3
 
     # --- YouTube upload (step 3) ---
     upload_enabled: bool = True
@@ -100,6 +102,7 @@ ENV_NAMES = {
     "trim": "TRIM",
     "crf": "CRF",
     "x264_preset": "X264_PRESET",
+    "render_ahead": "RENDER_AHEAD",
     "upload_enabled": "UPLOAD_ENABLED",
     "require_approval": "REQUIRE_APPROVAL",
     "privacy": "PRIVACY",

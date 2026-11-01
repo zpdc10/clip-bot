@@ -96,3 +96,23 @@ def test_shutdown_mid_render_requeues_instead_of_failing(tmp_path, monkeypatch):
     monkeypatch.setattr(r, "render", killed)
     process_queued(state, Config(watch_dir=str(clips)), tmp_path / "out", stopping=lambda: stopping["now"])
     assert state.get(clip.id).status == "queued"
+
+
+def test_render_ahead_limits_backlog(tmp_path, monkeypatch):
+    import clipbot.render as r
+
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    state = State(tmp_path / "db.sqlite")
+    for i in range(5):
+        (clips / f"{i}.mp4").write_bytes(b"x")
+        state.enqueue(str(i), f"{i}.mp4", 1)
+    monkeypatch.setattr(r, "render", lambda src, dst, cfg: dst)
+    cfg = Config(watch_dir=str(clips), render_ahead=2)
+    out = tmp_path / "out"
+    assert process_queued(state, cfg, out, limit=10) == 2
+    assert process_queued(state, cfg, out, limit=10) == 0  # two already waiting
+    state.set_status(state.by_status("rendered")[0].id, "uploaded")
+    assert process_queued(state, cfg, out, limit=10) == 1
+    assert len(state.by_status("queued")) == 2
+    assert process_queued(state, Config(watch_dir=str(clips), render_ahead=0), out, limit=10) == 2
