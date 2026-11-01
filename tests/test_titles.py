@@ -33,3 +33,8 @@ def test_make_title_falls_back_when_api_fails(monkeypatch):
 def test_make_title_uses_ai_when_available(monkeypatch):
     monkeypatch.setattr(titles, "ai_title", lambda f, k, m: "Eco 4K on Anubis")
     assert titles.make_title("anubis4kecofrags.mp4", api_key="sk-test") == "Eco 4K on Anubis"
+
+
+def test_slang_words():
+    assert titles.rule_title("1v4deagclutchmirage") == "1v4 Deagle Clutch Mirage"
+    assert titles.rule_title("1v4notimesadge") == "1v4 No Time Sadge"
