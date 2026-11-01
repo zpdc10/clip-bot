@@ -49,6 +49,8 @@ class Config:
 
     # --- YouTube upload (step 3) ---
     upload_enabled: bool = True
+    # When on, rendered clips wait for an "Approve" click in the web UI before uploading.
+    require_approval: bool = False
     # private / unlisted / public. Starts private so you can check the first few.
     privacy: str = "private"
     # Uploads per rolling 24 h. YouTube's API allows 100/day; 0 = no cap.
@@ -91,6 +93,7 @@ ENV_NAMES = {
     "crf": "CRF",
     "x264_preset": "X264_PRESET",
     "upload_enabled": "UPLOAD_ENABLED",
+    "require_approval": "REQUIRE_APPROVAL",
     "privacy": "PRIVACY",
     "daily_upload_limit": "DAILY_UPLOAD_LIMIT",
     "title_template": "TITLE_TEMPLATE",
