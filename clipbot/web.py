@@ -328,7 +328,7 @@ PAGE = """<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--fg:#e6e8ee;--muted:#98a2b3;--line:#2a2f3a;--accent:#748ffc;--ok:#69db7c;--warn:#ffa94d;--bad:#ff8787}}
 *{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
 header{display:flex;gap:18px;align-items:center;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
-header b{font-size:17px;margin-right:8px}header a{color:var(--muted);text-decoration:none}header a.on{color:var(--fg);font-weight:600}
+header b{font-size:17px;margin-right:8px}header nav{display:contents}header a{color:var(--muted);text-decoration:none}header a.on{color:var(--fg);font-weight:600}
 .pill{margin-left:auto;font-size:13px;padding:3px 10px;border-radius:99px;border:1px solid var(--line)}
 main{max-width:1100px;margin:0 auto;padding:20px 16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px}
@@ -350,14 +350,40 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 form{margin:0}video{max-height:420px;border-radius:8px;background:#000}
 details summary{cursor:pointer;color:var(--accent);font-size:13px}
 code{background:var(--bg);padding:1px 5px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
-@media (max-width:700px){.row{grid-template-columns:1fr}.hide-sm{display:none}}
+.sm-only{display:none}.clipname{word-break:break-word}
+.savebar{position:sticky;bottom:0;padding:12px 0;background:linear-gradient(transparent,var(--bg) 35%)}
+@media (max-width:700px){
+.row{grid-template-columns:1fr}.hide-sm{display:none}.sm-only{display:inline}
+header{position:sticky;top:0;z-index:5;gap:4px 2px;padding:8px 12px}
+header b{width:100%;display:flex;align-items:center;justify-content:space-between;margin:0 0 2px}
+header nav{display:flex;width:100%;overflow-x:auto}header nav a{flex:1;text-align:center;padding:8px 6px;border-radius:7px}
+header nav a.on{background:var(--bg)}
+.pill{margin:0;font-size:12px;font-weight:400;padding:2px 9px}.pill.ok{color:var(--ok)}.pill.no{color:var(--warn)}
+main{padding:12px 12px 24px}.card{padding:12px 14px;margin-bottom:12px}
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.counts a{min-width:0}
+.counts .card{padding:8px 10px}.counts .n{font-size:20px}
+input[type=text],input[type=number],input[type=password],select,textarea{font-size:16px;padding:9px 10px}
+button,.btn{font-size:15px;padding:9px 14px;min-height:40px}
+input[type=checkbox]{width:22px;height:22px}
+.row.bool{grid-template-columns:1fr auto;align-items:center}.row.bool>div{display:contents}.row.bool .muted{grid-column:1/-1;order:3}
+.row.bool label{padding-top:0}
+.cliplist{background:none;border:0;padding:0!important}
+.cliplist table,.cliplist tbody,.cliplist tr,.cliplist td{display:block}
+.cliplist thead,.cliplist .c-id{display:none}
+.savebar button{width:100%}
+.cliplist tr{display:grid;grid-template-columns:1fr auto;gap:6px 10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.cliplist td{border:0;padding:0}.cliplist .c-status{text-align:right}.cliplist .c-title,.cliplist .c-empty{grid-column:1/-1}
+.actions button{flex:1}
+video{width:100%;max-height:70vh}
+.inline.stack-sm{flex-direction:column}
+}
 </style></head><body>
-<header><b>clip-bot</b>
-<a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
+<header><b>clip-bot <span class="pill sm-only {{ 'ok' if signed_in else 'no' }}">{{ 'YouTube ✓' if signed_in else 'YouTube not connected' }}</span></b>
+<nav><a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
 <a href="{{ url_for('settings') }}" class="{{ 'on' if nav=='settings' }}">Settings</a>
 <a href="{{ url_for('youtube_page') }}" class="{{ 'on' if nav=='youtube_page' }}">YouTube</a>
-<a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a>
-<span class="pill">{{ 'YouTube connected' if signed_in else 'YouTube not connected' }}</span></header>
+<a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a></nav>
+<span class="pill hide-sm">{{ 'YouTube connected' if signed_in else 'YouTube not connected' }}</span></header>
 <main>
 {% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="card flash">{{ m }}</div>{% endfor %}{% endwith %}
 __BODY__
@@ -373,15 +399,15 @@ INDEX = """
 {% endfor %}</div>
 <p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}{% if next_post %} · next post after {{ next_post }}{% endif %} · new uploads are <b>{{ cfg.privacy }}</b>{% if cfg.require_approval %} · approval required{% endif %}{% if not cfg.upload_enabled %} · uploading is off{% endif %}
 · <a href="{{ request.full_path }}">refresh</a></p>
-<div class="card" style="padding:4px 12px">
-<table><tr><th>#</th><th>Clip</th><th>Status</th><th>Title</th></tr>
+<div class="card cliplist" style="padding:4px 12px">
+<table><thead><tr><th>#</th><th>Clip</th><th>Status</th><th>Title</th></tr></thead><tbody>
 {% for c in clips %}<tr>
-<td class="muted">{{ c.id }}</td>
-<td><div>{{ Path(c.rel_path).name }}</div><div class="muted">{{ fmt_time(c.created_at) }}</div></td>
-<td><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' and cfg.require_approval and not c.approved %} · needs approval{% endif %}</span>
+<td class="muted c-id">{{ c.id }}</td>
+<td class="c-clip"><div class="clipname">{{ Path(c.rel_path).name }}</div><div class="muted"><span class="sm-only">#{{ c.id }} · </span>{{ fmt_time(c.created_at) }}</div></td>
+<td class="c-status"><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' and cfg.require_approval and not c.approved %} · needs approval{% endif %}</span>
 {% if c.status=='rendered' and c.retry_at %}<div class="muted">retry after {{ fmt_time(c.retry_at) }}</div>{% endif %}
 {% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a></div>{% endif %}</td>
-<td>
+<td class="c-title">
 {% if c.status in ['uploaded'] %}{{ c.title }}
 {% else %}<form method="post" action="{{ url_for('set_title', clip_id=c.id) }}" class="inline">
 <input type="hidden" name="next" value="{{ request.full_path }}">
@@ -395,14 +421,14 @@ INDEX = """
 </div>
 {% if c.output_path and c.status in ['rendered','failed','skipped'] %}<details><summary>Preview</summary><video src="{{ url_for('video', clip_id=c.id) }}" controls preload="none"></video></details>{% endif %}
 </td></tr>
-{% else %}<tr><td colspan="4" class="muted" style="padding:20px 6px">No clips yet. Export a clip to the watch folder ({{ cfg.watch_dir }}) and it shows up here within a minute.</td></tr>{% endfor %}
-</table></div>
+{% else %}<tr><td colspan="4" class="muted c-empty" style="padding:20px 6px">No clips yet. Export a clip to the watch folder ({{ cfg.watch_dir }}) and it shows up here within a minute.</td></tr>{% endfor %}
+</tbody></table></div>
 """
 
 SETTINGS = """
 <form method="post">
 {% for section, items in layout %}<div class="card"><h3 style="margin:0 0 6px">{{ section }}</h3>
-{% for name, label, help in items %}<div class="row"><label for="{{ name }}">{{ label }}</label><div>
+{% for name, label, help in items %}<div class="row{{ ' bool' if types[name] in ['bool'] }}"><label for="{{ name }}">{{ label }}</label><div>
 {% if name in choices %}<select name="{{ name }}" id="{{ name }}">{% for o in choices[name] %}<option {{ 'selected' if cfg[name]==o }}>{{ o }}</option>{% endfor %}</select>
 {% elif types[name] in ['bool'] %}<input type="checkbox" name="{{ name }}" id="{{ name }}" {{ 'checked' if cfg[name] }}>
 {% elif name in secret %}<input type="password" name="{{ name }}" id="{{ name }}" autocomplete="off" placeholder="{{ 'saved (hidden)' if cfg[name] else 'not set' }}">
@@ -411,7 +437,7 @@ SETTINGS = """
 {% else %}<input type="{{ 'number' if types[name] in ['int','float'] else 'text' }}" {{ 'step=any' if types[name]=='float' }} name="{{ name }}" id="{{ name }}" value="{{ cfg[name] }}">{% endif %}
 {% if help %}<div class="muted">{{ help }}</div>{% endif %}</div></div>{% endfor %}
 </div>{% endfor %}
-<button class="primary">Save settings</button>
+<div class="savebar"><button class="primary">Save settings</button></div>
 </form>
 """
 
@@ -439,7 +465,7 @@ YOUTUBE = """
 {% elif auth_url %}
 <p><b>a.</b> <a class="btn" href="{{ auth_url }}" target="_blank" rel="noopener">Open Google sign-in</a>. Pick the account that owns your channel and allow access. If Google warns that the app isn't verified, click <i>Advanced → Go to app</i>.</p>
 <p><b>b.</b> Google then sends you to a <code>localhost:8080</code> page that won't load. That's expected. Copy the full address from the address bar and paste it here:</p>
-<form method="post" action="{{ url_for('youtube_finish') }}" class="inline"><input type="text" name="pasted" placeholder="http://localhost:8080/?state=...&code=..." required><button class="primary">Finish</button></form>
+<form method="post" action="{{ url_for('youtube_finish') }}" class="inline stack-sm"><input type="text" name="pasted" placeholder="http://localhost:8080/?state=...&code=..." required><button class="primary">Finish</button></form>
 {% elif has_secret %}<form method="post" action="{{ url_for('youtube_start') }}"><button class="primary">Start sign-in</button></form>
 {% else %}<p class="muted">Upload the OAuth client first.</p>{% endif %}
 </div>
