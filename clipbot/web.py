@@ -347,7 +347,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .row{display:grid;grid-template-columns:220px 1fr;gap:6px 16px;align-items:start;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row label{font-weight:500;padding-top:6px}
 .inline{display:flex;gap:6px}.inline input{flex:1}.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-form{margin:0}video{max-height:420px;border-radius:8px;background:#000}
+form{margin:0}video{max-height:420px;border-radius:8px;background:#000}.preview{margin-top:8px}
 details summary{cursor:pointer;color:var(--accent);font-size:13px}
 code{background:var(--bg);padding:1px 5px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
 .sm-only{display:none}.clipname{word-break:break-word}
@@ -418,11 +418,19 @@ INDEX = """
 {% if c.status in ['failed','skipped'] or (c.status=='rendered' and c.retry_at) %}<form method="post" action="{{ url_for('retry', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Retry</button></form>{% endif %}
 {% if c.status in ['rendered','failed','skipped'] %}<form method="post" action="{{ url_for('rerender', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Re-render</button></form>{% endif %}
 {% if c.status in ['queued','rendered','failed'] %}<form method="post" action="{{ url_for('skip', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Skip</button></form>{% endif %}
+{% if c.output_path and c.status in ['rendered','failed','skipped'] %}<button type="button" onclick="togglePreview(this, {{ c.id }})">▶ Preview</button>{% endif %}
 </div>
-{% if c.output_path and c.status in ['rendered','failed','skipped'] %}<details><summary>Preview</summary><video src="{{ url_for('video', clip_id=c.id) }}" controls preload="none"></video></details>{% endif %}
+{% if c.output_path and c.status in ['rendered','failed','skipped'] %}<div class="preview" id="preview-{{ c.id }}" hidden><video data-src="{{ url_for('video', clip_id=c.id) }}" controls preload="none" playsinline></video></div>{% endif %}
 </td></tr>
 {% else %}<tr><td colspan="4" class="muted c-empty" style="padding:20px 6px">No clips yet. Export a clip to the watch folder ({{ cfg.watch_dir }}) and it shows up here within a minute.</td></tr>{% endfor %}
 </tbody></table></div>
+<script>
+function togglePreview(btn, id){
+  var box=document.getElementById('preview-'+id), v=box.querySelector('video');
+  if(box.hidden){ if(!v.src) v.src=v.dataset.src; box.hidden=false; btn.textContent='■ Hide preview'; }
+  else { v.pause(); box.hidden=true; btn.textContent='▶ Preview'; }
+}
+</script>
 """
 
 SETTINGS = """
