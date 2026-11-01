@@ -69,7 +69,7 @@ Titles come from the clip's filename. The built-in rules split shorthand like `m
 2. Under **APIs & Services → Library**, enable **YouTube Data API v3**.
 3. Under **OAuth consent screen**, choose External, fill in the app name and your email, and add your own Google account as a **test user**. For a personal bot, leaving the app in Testing is fine. Note that Google expires refresh tokens for apps in Testing after 7 days. To avoid having to sign in again every week, publish the app (“In production”). You don't need Google's verification for this, because you're the only user, so you can click through the “unverified app” warning.
 4. Under **Credentials → Create credentials → OAuth client ID**, choose type **Desktop app** and download the JSON.
-6. In the web UI's **YouTube** tab, upload the JSON, click **Start sign-in**, and follow the steps there. You can also do this from a terminal with `docker exec -it clip-bot clipbot auth`.
+5. In the web UI's **YouTube** tab, upload the JSON, click **Start sign-in**, and follow the steps there. You can also do this from a terminal with `docker exec -it clip-bot clipbot auth`.
 
 ## Running it now
 
