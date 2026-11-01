@@ -7,6 +7,7 @@ import signal
 import threading
 
 from . import config
+from .render import process_queued
 from .state import State
 from .watcher import Watcher
 
@@ -42,7 +43,10 @@ def main() -> None:
                 watcher.reconfigure(new.watch_path, new.extension_set, new.settle_seconds)
                 cfg = new
             watcher.scan()
-            # Steps 2 and 3 hook in here: render queued clips, then upload rendered ones.
+            # Render one clip per cycle so new arrivals keep being picked up between renders.
+            if process_queued(state, cfg, data / "rendered", stopping=stop.is_set):
+                continue  # more may be waiting; skip the sleep
+            # Step 3 hooks in here: upload rendered clips.
         except Exception:
             log.exception("scan failed; will retry")
         stop.wait(cfg.poll_interval)

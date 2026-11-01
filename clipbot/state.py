@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS clips (
     size        INTEGER NOT NULL,
     status      TEXT NOT NULL DEFAULT 'queued',
     error       TEXT,
+    output_path TEXT,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
 );
@@ -33,6 +34,7 @@ class Clip:
     size: int
     status: str
     error: str | None
+    output_path: str | None = None
 
 
 class State:
@@ -41,7 +43,13 @@ class State:
         self._db = sqlite3.connect(db_path)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        self._migrate()
         self._db.commit()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
+        if "output_path" not in cols:
+            self._db.execute("ALTER TABLE clips ADD COLUMN output_path TEXT")
 
     def close(self) -> None:
         self._db.close()
@@ -71,12 +79,15 @@ class State:
         rows = self._db.execute("SELECT * FROM clips WHERE status = ? ORDER BY id", (status,)).fetchall()
         return [_to_clip(r) for r in rows]
 
-    def set_status(self, clip_id: int, status: str, error: str | None = None) -> None:
+    def set_status(
+        self, clip_id: int, status: str, error: str | None = None, output_path: str | None = None
+    ) -> None:
         if status not in STATUSES:
             raise ValueError(f"unknown status {status!r}")
         self._db.execute(
-            "UPDATE clips SET status = ?, error = ?, updated_at = ? WHERE id = ?",
-            (status, error, time.time(), clip_id),
+            "UPDATE clips SET status = ?, error = ?, output_path = COALESCE(?, output_path),"
+            " updated_at = ? WHERE id = ?",
+            (status, error, output_path, time.time(), clip_id),
         )
         self._db.commit()
 
@@ -97,4 +108,5 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         size=row["size"],
         status=row["status"],
         error=row["error"],
+        output_path=row["output_path"],
     )
