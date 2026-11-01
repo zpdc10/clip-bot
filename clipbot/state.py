@@ -44,6 +44,8 @@ class Clip:
     created_at: float = 0.0
     attempts: int = 0
     retry_at: float | None = None
+    # Privacy YouTube reported for the upload (None for uploads made before this was recorded).
+    privacy: str | None = None
 
 
 class State:
@@ -60,7 +62,7 @@ class State:
         cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
         for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL"),
                          ("approved", "INTEGER NOT NULL DEFAULT 0"),
-                         ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("retry_at", "REAL")):
+                         ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("retry_at", "REAL"), ("privacy", "TEXT")):
             if col not in cols:
                 self._db.execute(f"ALTER TABLE clips ADD COLUMN {col} {typ}")
 
@@ -108,12 +110,12 @@ class State:
         self._db.execute("UPDATE clips SET title = ?, updated_at = ? WHERE id = ?", (title, time.time(), clip_id))
         self._db.commit()
 
-    def mark_uploaded(self, clip_id: int, video_id: str, when: float) -> None:
+    def mark_uploaded(self, clip_id: int, video_id: str, when: float, privacy: str | None = None) -> None:
         self._db.execute(
-            "UPDATE clips SET status = 'uploaded', video_id = ?, uploaded_at = ?, error = NULL, retry_at = NULL,"
-            " updated_at = ?"
+            "UPDATE clips SET status = 'uploaded', video_id = ?, uploaded_at = ?, privacy = ?, error = NULL,"
+            " retry_at = NULL, updated_at = ?"
             " WHERE id = ?",
-            (video_id, when, time.time(), clip_id),
+            (video_id, when, privacy, time.time(), clip_id),
         )
         self._db.commit()
 
@@ -201,4 +203,5 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         created_at=row["created_at"],
         attempts=row["attempts"],
         retry_at=row["retry_at"],
+        privacy=row["privacy"],
     )

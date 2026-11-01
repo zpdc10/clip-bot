@@ -195,3 +195,17 @@ def test_parse_window():
     for bad in ["nope", "25:00-1:00", "10:00-10:00"]:
         with pytest.raises(ValueError):
             parse_window(bad)
+
+
+def test_records_privacy_youtube_reports(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    cfg = Config(privacy="public")
+    assert process_rendered(state, cfg, tmp_path, upload_fn=lambda *a: ("vid1", "private")) == 1
+    clip = state.get(cid)
+    assert clip.video_id == "vid1" and clip.privacy == "private"
+
+
+def test_plain_id_falls_back_to_configured_privacy(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    process_rendered(state, Config(privacy="unlisted"), tmp_path, upload_fn=lambda *a: "vid2")
+    assert state.get(cid).privacy == "unlisted"

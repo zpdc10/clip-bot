@@ -458,6 +458,8 @@ __BODY__
 INDEX = """
 {% if not signed_in %}<div class="card flash">YouTube isn't connected yet, so clips will render but not upload.
 <a href="{{ url_for('youtube_page') }}">Connect YouTube</a></div>{% endif %}
+{% if signed_in and cfg.upload_enabled and cfg.privacy != 'public' %}<div class="card flash">New uploads are <b>{{ cfg.privacy }}</b>, so they won't show up in the Shorts feed and get no views.
+{% if cfg.privacy == 'private' %}Only you can see them. {% endif %}To post them for everyone, set Privacy to public in <a href="{{ url_for('settings') }}">Settings</a>. Videos already uploaded have to be changed in YouTube Studio.</div>{% endif %}
 {% if to_review %}<a class="btn primary reviewcta" href="{{ url_for('review') }}">Swipe to review {{ to_review }} clip{{ 's' if to_review != 1 }}</a>{% endif %}
 <div class="counts">
 <a href="{{ url_for('index') }}" class="{{ 'on' if not status }}"><div class="card"><div class="n">{{ counts.values()|sum }}</div><div class="muted">all</div></div></a>
@@ -473,7 +475,7 @@ INDEX = """
 <td class="c-clip"><div class="clipname">{{ Path(c.rel_path).name }}</div><div class="muted"><span class="sm-only">#{{ c.id }} · </span>{{ fmt_time(c.created_at) }}</div></td>
 <td class="c-status"><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' and cfg.require_approval and not c.approved %} · needs approval{% endif %}</span>
 {% if c.status=='rendered' and c.retry_at %}<div class="muted">retry after {{ fmt_time(c.retry_at) }}</div>{% endif %}
-{% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a></div>{% endif %}</td>
+{% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a>{% if c.privacy %} · <span class="{{ 'err' if c.privacy != 'public' }}">{{ c.privacy }}</span>{% endif %}</div>{% endif %}</td>
 <td class="c-title">
 {% if c.status in ['uploaded'] %}{{ c.title }}
 {% else %}<form method="post" action="{{ url_for('set_title', clip_id=c.id) }}" class="inline">

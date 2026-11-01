@@ -107,8 +107,8 @@ def credentials(data: Path):
 
 
 def upload(data: Path, video: Path, title: str, description: str, tags: list[str],
-           privacy: str, max_mbps: float = 0.0, category_id: str = "20") -> str:
-    """Upload a video and return its YouTube id. Category 20 is Gaming.
+           privacy: str, max_mbps: float = 0.0, category_id: str = "20") -> tuple[str, str]:
+    """Upload a video and return (YouTube id, privacy YouTube actually gave it). Category 20 is Gaming.
     max_mbps > 0 limits the average upload speed (megabits per second)."""
     import time
 
@@ -140,7 +140,11 @@ def upload(data: Path, video: Path, title: str, description: str, tags: list[str
             log.debug("upload %s: %d%%", video.name, int(status.progress() * 100))
             if max_mbps > 0:
                 time.sleep(throttle_delay(status.resumable_progress, time.monotonic() - started, max_mbps))
-    return response["id"]
+    actual = (response.get("status") or {}).get("privacyStatus") or privacy
+    if actual != privacy:
+        log.warning("asked YouTube for %s but it made %s %s; check the video in YouTube Studio",
+                    privacy, response["id"], actual)
+    return response["id"], actual
 
 
 def throttle_delay(bytes_sent: int, elapsed: float, max_mbps: float) -> float:

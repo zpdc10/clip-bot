@@ -87,7 +87,7 @@ def process_rendered(
     title = clip.title
     full_title = cfg.title_template.format(title=title)[:100]
     try:
-        video_id = upload_fn(
+        result = upload_fn(
             data, Path(clip.output_path), full_title, describe(cfg, title, clip.rel_path),
             [t.strip() for t in cfg.tags.split(",") if t.strip()], cfg.privacy, cfg.upload_limit_mbps,
         )
@@ -110,8 +110,9 @@ def process_rendered(
         log.error("upload of clip #%d failed, giving up: %s", clip.id, exc)
         state.set_status(clip.id, "failed", error=f"upload: {exc}")
         return 1
-    state.mark_uploaded(clip.id, video_id, clock())
-    log.info("uploaded clip #%d as https://youtube.com/shorts/%s (%s): %s", clip.id, video_id, cfg.privacy, full_title)
+    video_id, privacy = result if isinstance(result, tuple) else (result, cfg.privacy)
+    state.mark_uploaded(clip.id, video_id, clock(), privacy)
+    log.info("uploaded clip #%d as https://youtube.com/shorts/%s (%s): %s", clip.id, video_id, privacy, full_title)
     if not cfg.keep_rendered and clip.output_path:
         Path(clip.output_path).unlink(missing_ok=True)
     return 1
