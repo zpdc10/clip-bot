@@ -134,3 +134,18 @@ def test_bool_and_privacy_settings(tmp_path, monkeypatch):
     cfg = config.load(tmp_path)
     assert cfg.upload_enabled is False
     assert cfg.privacy == "private"
+
+
+def test_baseline_skips_existing_but_not_new(tmp_path):
+    clips, state, clock, w = make(tmp_path)
+    write(clips / "old1.mp4", b"a" * 100, clock.t - 1000)
+    write(clips / "old2.mp4", b"b" * 100, clock.t - 1000)
+    assert w.baseline("pre-existing") == 2
+    assert [c.status for c in state.recent()] == ["skipped", "skipped"]
+    assert w.scan() == [] and w.scan() == []
+
+    write(clips / "new.mp4", b"c" * 100, clock.t - 100)
+    w.scan()
+    ids = w.scan()
+    assert len(ids) == 1 and state.get(ids[0]).status == "queued"
+    assert w.baseline("again") == 0  # never duplicates

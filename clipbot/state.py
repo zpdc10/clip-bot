@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS clips (
     updated_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS clips_status ON clips(status);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 # Lifecycle: queued -> processing -> rendered -> uploaded, or failed at any point.
@@ -152,6 +153,24 @@ class State:
         for status, n in self._db.execute("SELECT status, COUNT(*) FROM clips GROUP BY status"):
             out[status] = n
         return out
+
+    def get_meta(self, key: str) -> str | None:
+        row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self._db.commit()
+
+    def is_empty(self) -> bool:
+        return self._db.execute("SELECT 1 FROM clips LIMIT 1").fetchone() is None
+
+    def add_skipped(self, fingerprint: str, rel_path: str, size: int, reason: str) -> bool:
+        clip = self.enqueue(fingerprint, rel_path, size)
+        if clip is None:
+            return False
+        self.set_status(clip.id, "skipped", error=reason)
+        return True
 
     def requeue_interrupted(self) -> int:
         """Clips left 'processing' by a crash or restart go back to the queue."""

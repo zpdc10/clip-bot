@@ -57,6 +57,13 @@ def main() -> None:
 
     watcher = Watcher(cfg.watch_path, state, cfg.extension_set, cfg.settle_seconds)
 
+    if state.get_meta("baseline_done") is None:
+        if state.is_empty() and not cfg.backfill_existing:
+            log.info("first start: recording clips already in %s as skipped (only new clips get posted)", cfg.watch_dir)
+            n = watcher.baseline("already in the folder when clip-bot was installed; Retry to post it")
+            log.info("skipped %d existing clip(s); Retry one in the web UI to post it anyway", n)
+        state.set_meta("baseline_done", "1")
+
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())

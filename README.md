@@ -29,6 +29,7 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `watch_dir` | `WATCH_DIR` | `/clips` | Folder your clips are exported to |
 | `poll_interval` | `POLL_INTERVAL` | `15` | Seconds between scans |
 | `settle_seconds` | `SETTLE_SECONDS` | `30` | How long a file must be unchanged before it counts as fully copied |
+| `backfill_existing` | `BACKFILL_EXISTING` | `false` | Only read on the very first start. Off: clips already in the folder are listed as **skipped** and only new exports get posted. Click Retry on one to post it anyway |
 | `extensions` | `CLIP_EXTENSIONS` | `.mp4,.mkv,.mov` | Which files count as clips |
 | `log_level` | `LOG_LEVEL` | `INFO` | `DEBUG` shows skipped files |
 | `crop_position` | `CROP_POSITION` | `0.5` | Where the 9:16 window sits: `0` left, `0.5` centre, `1` right |

@@ -32,6 +32,9 @@ class Config:
     settle_seconds: int = 30
     # Comma-separated video extensions to pick up.
     extensions: str = ".mp4,.mkv,.mov"
+    # On the very first start, also post clips that were already in the folder?
+    # Off: they're listed as skipped (Retry in the web UI posts one). Only read once.
+    backfill_existing: bool = False
     log_level: str = "INFO"
 
     # --- vertical render (step 2) ---
@@ -88,6 +91,7 @@ ENV_NAMES = {
     "poll_interval": "POLL_INTERVAL",
     "settle_seconds": "SETTLE_SECONDS",
     "extensions": "CLIP_EXTENSIONS",
+    "backfill_existing": "BACKFILL_EXISTING",
     "log_level": "LOG_LEVEL",
     "crop_position": "CROP_POSITION",
     "output_width": "OUTPUT_WIDTH",
