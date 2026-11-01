@@ -27,10 +27,19 @@ def process_rendered(
     upload_fn: Callable[..., str] = youtube.upload,
     clock: Callable[[], float] = time.time,
 ) -> int:
-    """Upload at most one rendered clip. Returns 1 if one was handled, else 0."""
+    """Title rendered clips, then upload at most one. Returns 1 if anything was done, else 0."""
+    rendered = state.by_status("rendered")
+    # Title clips as soon as they're rendered, so they can be checked and edited in the web UI
+    # before upload. One per cycle, since it may be an API call.
+    untitled = [c for c in rendered if not c.title]
+    if untitled:
+        c = untitled[0]
+        state.set_title(c.id, titles.make_title(c.rel_path, cfg.anthropic_api_key, cfg.title_model))
+        return 1
+
     if not cfg.upload_enabled:
         return 0
-    pending = state.by_status("rendered")
+    pending = [c for c in rendered if c.approved or not cfg.require_approval]
     if not pending:
         return 0
     if not youtube.is_signed_in(data):
@@ -41,8 +50,7 @@ def process_rendered(
         return 0
 
     clip = pending[0]
-    title = clip.title or titles.make_title(clip.rel_path, cfg.anthropic_api_key, cfg.title_model)
-    state.set_title(clip.id, title)
+    title = clip.title
     full_title = cfg.title_template.format(title=title)[:100]
     try:
         video_id = upload_fn(

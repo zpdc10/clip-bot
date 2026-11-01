@@ -23,7 +23,8 @@ CREATE INDEX IF NOT EXISTS clips_status ON clips(status);
 """
 
 # Lifecycle: queued -> processing -> rendered -> uploaded, or failed at any point.
-STATUSES = ("queued", "processing", "rendered", "uploaded", "failed")
+# "skipped" is set from the web UI for clips that should never be uploaded.
+STATUSES = ("queued", "processing", "rendered", "uploaded", "failed", "skipped")
 
 
 @dataclass(frozen=True)
@@ -38,12 +39,15 @@ class Clip:
     title: str | None = None
     video_id: str | None = None
     uploaded_at: float | None = None
+    approved: bool = False
+    created_at: float = 0.0
 
 
 class State:
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(db_path)
+        # The worker loop and the web UI each open their own State; wait on locks instead of failing.
+        self._db = sqlite3.connect(db_path, timeout=15, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
         self._migrate()
@@ -51,7 +55,8 @@ class State:
 
     def _migrate(self) -> None:
         cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
-        for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL")):
+        for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL"),
+                         ("approved", "INTEGER NOT NULL DEFAULT 0")):
             if col not in cols:
                 self._db.execute(f"ALTER TABLE clips ADD COLUMN {col} {typ}")
 
@@ -111,6 +116,25 @@ class State:
         row = self._db.execute("SELECT COUNT(*) FROM clips WHERE uploaded_at >= ?", (since,)).fetchone()
         return row[0]
 
+    def set_approved(self, clip_id: int, approved: bool = True) -> None:
+        self._db.execute("UPDATE clips SET approved = ?, updated_at = ? WHERE id = ?",
+                         (int(approved), time.time(), clip_id))
+        self._db.commit()
+
+    def recent(self, limit: int = 100, status: str | None = None) -> list[Clip]:
+        if status:
+            rows = self._db.execute("SELECT * FROM clips WHERE status = ? ORDER BY id DESC LIMIT ?",
+                                    (status, limit)).fetchall()
+        else:
+            rows = self._db.execute("SELECT * FROM clips ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [_to_clip(r) for r in rows]
+
+    def counts(self) -> dict[str, int]:
+        out = {s: 0 for s in STATUSES}
+        for status, n in self._db.execute("SELECT status, COUNT(*) FROM clips GROUP BY status"):
+            out[status] = n
+        return out
+
     def requeue_interrupted(self) -> int:
         """Clips left 'processing' by a crash or restart go back to the queue."""
         cur = self._db.execute(
@@ -132,4 +156,6 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         title=row["title"],
         video_id=row["video_id"],
         uploaded_at=row["uploaded_at"],
+        approved=bool(row["approved"]),
+        created_at=row["created_at"],
     )

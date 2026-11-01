@@ -13,6 +13,9 @@ def setup(tmp_path, n=1, signed_in=True):
         ids.append(c.id)
     if signed_in:
         (tmp_path / youtube.TOKEN_FILE).write_text("{}")
+    # First pass(es) only generate titles.
+    for _ in ids:
+        assert process_rendered(state, Config(upload_enabled=False), tmp_path, upload_fn=lambda *a: 1 / 0) == 1
     return state, ids
 
 
@@ -75,3 +78,26 @@ def test_auth_url_requires_client_secret(tmp_path):
 
     with pytest.raises(youtube.NotSignedIn):
         youtube.start_auth(tmp_path)
+
+
+def test_titles_generated_before_upload_even_when_disabled(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    assert state.get(cid).title == "Mirage 1v3 Clutch MP9 0"
+    assert state.get(cid).status == "rendered"
+
+
+def test_require_approval(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    cfg = Config(require_approval=True)
+    assert process_rendered(state, cfg, tmp_path, upload_fn=lambda *a: "v") == 0
+    state.set_approved(cid)
+    assert process_rendered(state, cfg, tmp_path, upload_fn=lambda *a: "v") == 1
+    assert state.get(cid).status == "uploaded"
+
+
+def test_edited_title_is_used(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    state.set_title(cid, "My own title")
+    seen = []
+    process_rendered(state, Config(), tmp_path, upload_fn=lambda d, v, t, *a: seen.append(t) or "v")
+    assert seen == ["My own title"]

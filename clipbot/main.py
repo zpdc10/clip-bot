@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 
@@ -41,6 +42,13 @@ def main() -> None:
     restarted = state.requeue_interrupted()
     if restarted:
         log.info("re-queued %d clip(s) interrupted by the last shutdown", restarted)
+
+    if os.environ.get("WEB_ENABLED", "true").lower() not in ("0", "false", "no", "off"):
+        from .web import serve
+
+        host = os.environ.get("WEB_HOST", "0.0.0.0")
+        port = int(os.environ.get("WEB_PORT", "8765"))
+        threading.Thread(target=serve, args=(host, port, data), daemon=True, name="web").start()
 
     watcher = Watcher(cfg.watch_path, state, cfg.extension_set, cfg.settle_seconds)
 

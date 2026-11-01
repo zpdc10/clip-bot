@@ -15,4 +15,5 @@ ENV WATCH_DIR=/clips \
     PYTHONUNBUFFERED=1
 
 VOLUME ["/clips", "/data"]
+EXPOSE 8765
 CMD ["clipbot"]
