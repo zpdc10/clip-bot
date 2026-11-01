@@ -60,6 +60,12 @@ class Config:
     privacy: str = "private"
     # Uploads per rolling 24 h. YouTube's API allows 100/day; 0 = no cap.
     daily_upload_limit: int = 10
+    # Minimum minutes between two uploads, so posts are spread out. 0 = no gap.
+    post_interval_minutes: int = 120
+    # Only post during this local time window, e.g. "16:00-23:00" (may wrap past midnight). Empty = any time.
+    post_window: str = ""
+    # Upload speed limit in megabits per second. 0 = unlimited.
+    upload_limit_mbps: float = 0.0
     # Retries for upload errors that may be temporary (5 min, 30 min, 2 h, 6 h apart). Max 4.
     upload_retries: int = 3
     # Keep the rendered Short after it's uploaded? Off saves disk space.
@@ -107,6 +113,9 @@ ENV_NAMES = {
     "require_approval": "REQUIRE_APPROVAL",
     "privacy": "PRIVACY",
     "daily_upload_limit": "DAILY_UPLOAD_LIMIT",
+    "post_interval_minutes": "POST_INTERVAL_MINUTES",
+    "post_window": "POST_WINDOW",
+    "upload_limit_mbps": "UPLOAD_LIMIT_MBPS",
     "upload_retries": "UPLOAD_RETRIES",
     "keep_rendered": "KEEP_RENDERED",
     "title_template": "TITLE_TEMPLATE",
@@ -115,6 +124,36 @@ ENV_NAMES = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
     "title_model": "TITLE_MODEL",
 }
+
+
+def parse_window(text: str) -> tuple[int, int] | None:
+    """"16:00-23:00" -> (960, 1380) minutes after midnight. Empty -> None. Raises ValueError."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        a, b = (part.strip() for part in text.split("-"))
+        out = []
+        for t in (a, b):
+            h, m = (t.split(":") + ["0"])[:2]
+            h, m = int(h), int(m)
+            if not (0 <= h <= 24 and 0 <= m < 60) or h * 60 + m > 1440:
+                raise ValueError
+            out.append(h * 60 + m)
+    except ValueError:
+        raise ValueError(f"post window must look like 16:00-23:00, got {text!r}") from None
+    if out[0] == out[1]:
+        raise ValueError("post window start and end can't be the same")
+    return out[0], out[1]
+
+
+def in_window(window: tuple[int, int] | None, minute_of_day: int) -> bool:
+    if window is None:
+        return True
+    start, end = window
+    if start < end:
+        return start <= minute_of_day < end
+    return minute_of_day >= start or minute_of_day < end  # wraps past midnight
 
 
 def data_dir() -> Path:

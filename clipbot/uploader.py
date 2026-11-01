@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import titles, youtube
-from .config import Config
+from .config import Config, in_window, parse_window
 from .state import State
 
 log = logging.getLogger(__name__)
@@ -71,6 +71,17 @@ def process_rendered(
     if cfg.daily_upload_limit > 0 and state.uploads_since(clock() - DAY) >= cfg.daily_upload_limit:
         log.debug("daily upload limit (%d) reached", cfg.daily_upload_limit)
         return 0
+    last = state.last_upload_at()
+    if cfg.post_interval_minutes > 0 and last and now - last < cfg.post_interval_minutes * 60:
+        return 0
+    try:
+        window = parse_window(cfg.post_window)
+    except ValueError as exc:
+        log.warning("ignoring post window: %s", exc)
+        window = None
+    lt = time.localtime(now)
+    if not in_window(window, lt.tm_hour * 60 + lt.tm_min):
+        return 0
 
     clip = pending[0]
     title = clip.title
@@ -78,7 +89,7 @@ def process_rendered(
     try:
         video_id = upload_fn(
             data, Path(clip.output_path), full_title, describe(cfg, title, clip.rel_path),
-            [t.strip() for t in cfg.tags.split(",") if t.strip()], cfg.privacy,
+            [t.strip() for t in cfg.tags.split(",") if t.strip()], cfg.privacy, cfg.upload_limit_mbps,
         )
     except youtube.NotSignedIn as exc:
         log.warning("can't upload: %s", exc)

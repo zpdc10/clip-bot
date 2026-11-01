@@ -42,7 +42,10 @@ SETTINGS_LAYOUT = [
         ("upload_enabled", "Upload automatically", "Off = render only."),
         ("require_approval", "Wait for my approval", "Rendered clips wait for an Approve click before uploading."),
         ("privacy", "Privacy", ""),
+        ("post_interval_minutes", "Post every (minutes)", "Minimum gap between uploads, e.g. 120 = at most one every 2 hours. 0 = no gap."),
+        ("post_window", "Posting hours", "Only post in this local time window, e.g. 16:00-23:00. Leave empty for any time."),
         ("daily_upload_limit", "Max uploads per 24 h", "0 = no cap. YouTube's API allows 100 a day."),
+        ("upload_limit_mbps", "Upload speed limit (Mbps)", "Caps upload bandwidth so it doesn't fill your connection. 0 = unlimited."),
         ("upload_retries", "Retries on upload errors", "Spaced 5 min, 30 min, 2 h, 6 h apart (max 4)."),
         ("keep_rendered", "Keep Shorts after upload", "Off deletes the rendered file once it's on YouTube, saving disk space."),
         ("title_template", "Title template", "{title} is the generated title, e.g. {title} #shorts"),
@@ -91,11 +94,15 @@ def create_app(data: Path | None = None) -> Flask:
             clips = st.recent(200, status)
             counts = st.counts()
             uploads_24h = st.uploads_since(time.time() - 86400)
+            last = st.last_upload_at()
         finally:
             st.close()
         cfg = config.load(data)
+        next_post = ""
+        if last and cfg.post_interval_minutes and time.time() - last < cfg.post_interval_minutes * 60:
+            next_post = _fmt_time(last + cfg.post_interval_minutes * 60)
         return render_template_string(
-            _page(INDEX), clips=clips, counts=counts, status=status, cfg=cfg,
+            _page(INDEX), next_post=next_post, clips=clips, counts=counts, status=status, cfg=cfg,
             uploads_24h=uploads_24h, fmt_time=_fmt_time, Path=Path,
         )
 
@@ -273,6 +280,9 @@ def _validated(values: dict) -> config.Config:
     cfg = config._apply(config.Config(), values, "web form")
     if not 0 <= cfg.crop_position <= 1:
         raise ValueError("crop position must be between 0 and 1")
+    config.parse_window(cfg.post_window)
+    if cfg.post_interval_minutes < 0 or cfg.upload_limit_mbps < 0:
+        raise ValueError("post interval and speed limit can't be negative")
     if cfg.render_ahead < 0:
         raise ValueError("render ahead can't be negative")
     if not 0 <= cfg.upload_retries <= 4:
@@ -361,7 +371,7 @@ INDEX = """
 {% for s in ['queued','rendered','uploaded','failed','skipped'] %}
 <a href="{{ url_for('index', status=s) }}" class="{{ 'on' if status==s }}"><div class="card"><div class="n">{{ counts[s] + (counts['processing'] if s=='queued' else 0) }}</div><div class="muted">{{ s }}</div></div></a>
 {% endfor %}</div>
-<p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h · new uploads are <b>{{ cfg.privacy }}</b>{% if cfg.require_approval %} · approval required{% endif %}{% if not cfg.upload_enabled %} · uploading is off{% endif %}
+<p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}{% if next_post %} · next post after {{ next_post }}{% endif %} · new uploads are <b>{{ cfg.privacy }}</b>{% if cfg.require_approval %} · approval required{% endif %}{% if not cfg.upload_enabled %} · uploading is off{% endif %}
 · <a href="{{ request.full_path }}">refresh</a></p>
 <div class="card" style="padding:4px 12px">
 <table><tr><th>#</th><th>Clip</th><th>Status</th><th>Title</th></tr>

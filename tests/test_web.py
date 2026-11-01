@@ -52,6 +52,7 @@ def test_save_settings_roundtrip(env):
 
 @pytest.mark.parametrize("field,value", [
     ("crop_position", "2"), ("crf", "abc"), ("title_template", "{nope}"), ("output_width", "1081"),
+    ("post_window", "evenings"), ("upload_limit_mbps", "-1"),
 ])
 def test_bad_settings_are_rejected(env, field, value):
     client, _, data = env
