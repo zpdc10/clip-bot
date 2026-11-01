@@ -9,12 +9,30 @@ import threading
 from . import config
 from .render import process_queued
 from .state import State
+from .uploader import process_rendered
+from . import youtube
 from .watcher import Watcher
 
 log = logging.getLogger("clipbot")
 
 
+def auth() -> None:
+    """`clipbot auth`: sign in to YouTube from a terminal (docker exec -it clip-bot clipbot auth)."""
+    data = config.data_dir()
+    print("1. Open this URL, choose your channel's Google account and approve:\n")
+    print(youtube.start_auth(data))
+    print("\n2. Your browser will then fail to load a localhost page. That's expected.")
+    pasted = input("   Copy the full URL from the address bar and paste it here: ")
+    youtube.finish_auth(data, pasted)
+    print("Signed in. Uploads will start on the next cycle.")
+
+
 def main() -> None:
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "auth":
+        auth()
+        return
     data = config.data_dir()
     cfg = config.load(data)
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -43,10 +61,11 @@ def main() -> None:
                 watcher.reconfigure(new.watch_path, new.extension_set, new.settle_seconds)
                 cfg = new
             watcher.scan()
-            # Render one clip per cycle so new arrivals keep being picked up between renders.
-            if process_queued(state, cfg, data / "rendered", stopping=stop.is_set):
+            # One render and one upload per cycle so new arrivals keep being picked up.
+            busy = process_queued(state, cfg, data / "rendered", stopping=stop.is_set)
+            busy += process_rendered(state, cfg, data)
+            if busy:
                 continue  # more may be waiting; skip the sleep
-            # Step 3 hooks in here: upload rendered clips.
         except Exception:
             log.exception("scan failed; will retry")
         stop.wait(cfg.poll_interval)

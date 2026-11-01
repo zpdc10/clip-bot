@@ -47,6 +47,21 @@ class Config:
     crf: int = 20
     x264_preset: str = "medium"
 
+    # --- YouTube upload (step 3) ---
+    upload_enabled: bool = True
+    # private / unlisted / public. Starts private so you can check the first few.
+    privacy: str = "private"
+    # Uploads per rolling 24 h. YouTube's API allows 100/day; 0 = no cap.
+    daily_upload_limit: int = 10
+    # {title} is the generated title.
+    title_template: str = "{title}"
+    # {title} and {filename} are available. Use \n for new lines.
+    description_template: str = "{title}\n\n#cs2 #counterstrike #shorts"
+    tags: str = "cs2,counter-strike,counterstrike 2,shorts,gaming"
+    # Optional: with a key, Claude writes the titles; without one, built-in rules do.
+    anthropic_api_key: str = ""
+    title_model: str = "claude-opus-5-5"
+
     @property
     def watch_path(self) -> Path:
         return Path(self.watch_dir)
@@ -75,6 +90,14 @@ ENV_NAMES = {
     "trim": "TRIM",
     "crf": "CRF",
     "x264_preset": "X264_PRESET",
+    "upload_enabled": "UPLOAD_ENABLED",
+    "privacy": "PRIVACY",
+    "daily_upload_limit": "DAILY_UPLOAD_LIMIT",
+    "title_template": "TITLE_TEMPLATE",
+    "description_template": "DESCRIPTION_TEMPLATE",
+    "tags": "TAGS",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "title_model": "TITLE_MODEL",
 }
 
 
@@ -83,6 +106,15 @@ def data_dir() -> Path:
 
 
 def _coerce(name: str, value, typ):
+    if typ is bool or typ == "bool":
+        if isinstance(value, bool):
+            return value
+        v = str(value).strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{name} must be true or false, got {value!r}")
     if typ is float or typ == "float":
         try:
             return float(value)
@@ -128,6 +160,10 @@ def load(data: Path | None = None) -> Config:
     if cfg.trim not in ("start", "end"):
         log.warning("trim must be 'start' or 'end', got %r; using 'end'", cfg.trim)
         cfg = replace(cfg, trim="end")
+    cfg = replace(cfg, privacy=cfg.privacy.lower())
+    if cfg.privacy not in ("private", "unlisted", "public"):
+        log.warning("privacy must be private, unlisted or public, got %r; using private", cfg.privacy)
+        cfg = replace(cfg, privacy="private")
     return cfg
 
 

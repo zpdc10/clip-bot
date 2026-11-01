@@ -35,6 +35,9 @@ class Clip:
     status: str
     error: str | None
     output_path: str | None = None
+    title: str | None = None
+    video_id: str | None = None
+    uploaded_at: float | None = None
 
 
 class State:
@@ -48,8 +51,9 @@ class State:
 
     def _migrate(self) -> None:
         cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
-        if "output_path" not in cols:
-            self._db.execute("ALTER TABLE clips ADD COLUMN output_path TEXT")
+        for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL")):
+            if col not in cols:
+                self._db.execute(f"ALTER TABLE clips ADD COLUMN {col} {typ}")
 
     def close(self) -> None:
         self._db.close()
@@ -91,6 +95,22 @@ class State:
         )
         self._db.commit()
 
+    def set_title(self, clip_id: int, title: str) -> None:
+        self._db.execute("UPDATE clips SET title = ?, updated_at = ? WHERE id = ?", (title, time.time(), clip_id))
+        self._db.commit()
+
+    def mark_uploaded(self, clip_id: int, video_id: str, when: float) -> None:
+        self._db.execute(
+            "UPDATE clips SET status = 'uploaded', video_id = ?, uploaded_at = ?, error = NULL, updated_at = ?"
+            " WHERE id = ?",
+            (video_id, when, time.time(), clip_id),
+        )
+        self._db.commit()
+
+    def uploads_since(self, since: float) -> int:
+        row = self._db.execute("SELECT COUNT(*) FROM clips WHERE uploaded_at >= ?", (since,)).fetchone()
+        return row[0]
+
     def requeue_interrupted(self) -> int:
         """Clips left 'processing' by a crash or restart go back to the queue."""
         cur = self._db.execute(
@@ -109,4 +129,7 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         status=row["status"],
         error=row["error"],
         output_path=row["output_path"],
+        title=row["title"],
+        video_id=row["video_id"],
+        uploaded_at=row["uploaded_at"],
     )

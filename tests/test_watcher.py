@@ -126,3 +126,11 @@ def test_save_roundtrip_and_bad_file(tmp_path, monkeypatch):
 
     (tmp_path / "settings.json").write_text("{not json")
     assert config.load(tmp_path) == config.Config()
+
+
+def test_bool_and_privacy_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("UPLOAD_ENABLED", "no")
+    monkeypatch.setenv("PRIVACY", "everyone")
+    cfg = config.load(tmp_path)
+    assert cfg.upload_enabled is False
+    assert cfg.privacy == "private"
