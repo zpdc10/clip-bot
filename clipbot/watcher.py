@@ -86,6 +86,25 @@ class Watcher:
                 continue
         return sorted(out)
 
+    def baseline(self, reason: str) -> int:
+        """Record every clip already in the folder as skipped, without rendering anything.
+        Used on first start so only clips exported from now on get posted."""
+        if not self.watch_dir.is_dir():
+            return 0
+        n = 0
+        for path in self._candidates():
+            try:
+                st = path.stat()
+                if st.st_size == 0:
+                    continue
+                fp = fingerprint(path)
+            except OSError:
+                continue
+            if self.state.add_skipped(fp, str(path.relative_to(self.watch_dir)), st.st_size, reason):
+                n += 1
+            self._done[path] = _Seen(st.st_size, st.st_mtime)
+        return n
+
     def scan(self) -> list[int]:
         """Run one pass over the folder. Returns ids of clips newly added to the queue."""
         if not self.watch_dir.is_dir():
