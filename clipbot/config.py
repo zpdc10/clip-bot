@@ -34,6 +34,19 @@ class Config:
     extensions: str = ".mp4,.mkv,.mov"
     log_level: str = "INFO"
 
+    # --- vertical render (step 2) ---
+    # Where the 9:16 crop window sits: 0.0 = left edge, 0.5 = centre, 1.0 = right edge.
+    crop_position: float = 0.5
+    output_width: int = 1080
+    output_height: int = 1920
+    # Longest Short to produce, in seconds (YouTube allows up to 180). 0 = never trim.
+    max_duration: int = 60
+    # Which part to keep when a clip is too long: "end" (where the highlight usually is) or "start".
+    trim: str = "end"
+    # x264 quality, lower is better (18-23 is sensible) and preset (slower = smaller file).
+    crf: int = 20
+    x264_preset: str = "medium"
+
     @property
     def watch_path(self) -> Path:
         return Path(self.watch_dir)
@@ -55,6 +68,13 @@ ENV_NAMES = {
     "settle_seconds": "SETTLE_SECONDS",
     "extensions": "CLIP_EXTENSIONS",
     "log_level": "LOG_LEVEL",
+    "crop_position": "CROP_POSITION",
+    "output_width": "OUTPUT_WIDTH",
+    "output_height": "OUTPUT_HEIGHT",
+    "max_duration": "MAX_DURATION",
+    "trim": "TRIM",
+    "crf": "CRF",
+    "x264_preset": "X264_PRESET",
 }
 
 
@@ -63,6 +83,11 @@ def data_dir() -> Path:
 
 
 def _coerce(name: str, value, typ):
+    if typ is float or typ == "float":
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a number, got {value!r}") from exc
     if typ is int or typ == "int":
         try:
             return int(value)
@@ -99,7 +124,10 @@ def load(data: Path | None = None) -> Config:
             cfg = _apply(cfg, saved, str(path))
         except (OSError, ValueError) as exc:
             log.error("couldn't read %s, using defaults and environment: %s", path, exc)
-    cfg = replace(cfg, log_level=cfg.log_level.upper())
+    cfg = replace(cfg, log_level=cfg.log_level.upper(), trim=cfg.trim.lower())
+    if cfg.trim not in ("start", "end"):
+        log.warning("trim must be 'start' or 'end', got %r; using 'end'", cfg.trim)
+        cfg = replace(cfg, trim="end")
     return cfg
 
 
