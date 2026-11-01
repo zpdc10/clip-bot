@@ -26,7 +26,7 @@ MAPS = {
 }
 WEAPONS = {
     "ak": "AK", "ak47": "AK-47", "m4": "M4", "m4a4": "M4A4", "m4a1": "M4A1-S", "m4a1s": "M4A1-S",
-    "awp": "AWP", "scout": "Scout", "ssg": "SSG", "deagle": "Deagle", "deag": "Deagle", "usp": "USP", "usps": "USP-S",
+    "awp": "AWP", "scout": "Scout", "ssg": "SSG", "deagle": "Deagle", "deag": "Deag", "usp": "USP", "usps": "USP-S",
     "glock": "Glock", "glocks": "Glocks", "p250": "P250", "tec9": "Tec-9", "fiveseven": "Five-SeveN",
     "cz": "CZ", "r8": "R8", "mp9": "MP9", "mac10": "MAC-10", "mac": "MAC", "mp7": "MP7", "mp5": "MP5",
     "ump": "UMP", "p90": "P90", "bizon": "Bizon", "famas": "FAMAS", "galil": "Galil", "aug": "AUG",
