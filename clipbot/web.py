@@ -15,7 +15,7 @@ from pathlib import Path
 
 from flask import Flask, abort, flash, redirect, render_template_string, request, send_file, url_for
 
-from . import config, youtube
+from . import config, logbuffer, youtube
 from .state import STATUSES, State
 
 log = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ SETTINGS_LAYOUT = [
         ("require_approval", "Wait for my approval", "Rendered clips wait for an Approve click before uploading."),
         ("privacy", "Privacy", ""),
         ("daily_upload_limit", "Max uploads per 24 h", "0 = no cap. YouTube's API allows 100 a day."),
+        ("upload_retries", "Retries on upload errors", "Spaced 5 min, 30 min, 2 h, 6 h apart (max 4)."),
+        ("keep_rendered", "Keep Shorts after upload", "Off deletes the rendered file once it's on YouTube, saving disk space."),
         ("title_template", "Title template", "{title} is the generated title, e.g. {title} #shorts"),
         ("description_template", "Description", "{title} and {filename} work here."),
         ("tags", "Tags", "Comma-separated."),
@@ -130,6 +132,7 @@ def create_app(data: Path | None = None) -> Flask:
     @app.post("/clips/<int:clip_id>/retry")
     def retry(clip_id):
         def fn(st, clip):
+            st.reset_attempts(clip.id)
             if clip.output_path and Path(clip.output_path).exists():
                 st.set_status(clip.id, "rendered")
                 return f"#{clip.id} will be uploaded again."
@@ -243,6 +246,19 @@ def create_app(data: Path | None = None) -> Flask:
         flash("Signed in to YouTube. Uploads start on the next cycle.")
         return redirect(url_for("index"))
 
+    @app.get("/logs")
+    def logs():
+        return render_template_string(_page(LOGS), lines=list(logbuffer.LINES)[::-1])
+
+    @app.get("/healthz")
+    def healthz():
+        st = db()
+        try:
+            st.counts()
+        finally:
+            st.close()
+        return {"ok": True}
+
     @app.post("/youtube/sign-out")
     def youtube_sign_out():
         (data / youtube.TOKEN_FILE).unlink(missing_ok=True)
@@ -256,6 +272,8 @@ def _validated(values: dict) -> config.Config:
     cfg = config._apply(config.Config(), values, "web form")
     if not 0 <= cfg.crop_position <= 1:
         raise ValueError("crop position must be between 0 and 1")
+    if not 0 <= cfg.upload_retries <= 4:
+        raise ValueError("upload retries must be between 0 and 4")
     for name in ("poll_interval", "output_width", "output_height"):
         if getattr(cfg, name) <= 0:
             raise ValueError(f"{name.replace('_', ' ')} must be more than 0")
@@ -325,6 +343,7 @@ code{background:var(--bg);padding:1px 5px;border-radius:5px;border:1px solid var
 <a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
 <a href="{{ url_for('settings') }}" class="{{ 'on' if nav=='settings' }}">Settings</a>
 <a href="{{ url_for('youtube_page') }}" class="{{ 'on' if nav=='youtube_page' }}">YouTube</a>
+<a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a>
 <span class="pill">{{ 'YouTube connected' if signed_in else 'YouTube not connected' }}</span></header>
 <main>
 {% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="card flash">{{ m }}</div>{% endfor %}{% endwith %}
@@ -347,6 +366,7 @@ INDEX = """
 <td class="muted">{{ c.id }}</td>
 <td><div>{{ Path(c.rel_path).name }}</div><div class="muted">{{ fmt_time(c.created_at) }}</div></td>
 <td><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' and cfg.require_approval and not c.approved %} · needs approval{% endif %}</span>
+{% if c.status=='rendered' and c.retry_at %}<div class="muted">retry after {{ fmt_time(c.retry_at) }}</div>{% endif %}
 {% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a></div>{% endif %}</td>
 <td>
 {% if c.status in ['uploaded'] %}{{ c.title }}
@@ -356,7 +376,7 @@ INDEX = """
 {% if c.error %}<div class="err">{{ c.error[:300] }}</div>{% endif %}
 <div class="actions">
 {% if c.status=='rendered' and cfg.require_approval and not c.approved %}<form method="post" action="{{ url_for('approve', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button class="primary">Approve</button></form>{% endif %}
-{% if c.status in ['failed','skipped'] %}<form method="post" action="{{ url_for('retry', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Retry</button></form>{% endif %}
+{% if c.status in ['failed','skipped'] or (c.status=='rendered' and c.retry_at) %}<form method="post" action="{{ url_for('retry', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Retry</button></form>{% endif %}
 {% if c.status in ['rendered','failed','skipped'] %}<form method="post" action="{{ url_for('rerender', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Re-render</button></form>{% endif %}
 {% if c.status in ['queued','rendered','failed'] %}<form method="post" action="{{ url_for('skip', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Skip</button></form>{% endif %}
 </div>
@@ -380,6 +400,12 @@ SETTINGS = """
 </div>{% endfor %}
 <button class="primary">Save settings</button>
 </form>
+"""
+
+LOGS = """
+<p class="muted">Newest first. The last 500 lines since the container started. <a href="{{ url_for('logs') }}">refresh</a></p>
+<div class="card"><pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:12.5px">{% for l in lines %}{{ l }}
+{% else %}Nothing logged yet.{% endfor %}</pre></div>
 """
 
 YOUTUBE = """

@@ -94,7 +94,12 @@ def credentials(data: Path):
     creds = Credentials.from_authorized_user_file(str(path), SCOPES)
     if not creds.valid:
         if creds.refresh_token:
-            creds.refresh(Request())
+            from google.auth.exceptions import RefreshError
+
+            try:
+                creds.refresh(Request())
+            except RefreshError as exc:
+                raise NotSignedIn(f"YouTube sign-in expired or was revoked; sign in again in the web UI ({exc})")
             _save(data, creds)
         else:
             raise NotSignedIn("YouTube sign-in expired; run `clipbot auth` again")

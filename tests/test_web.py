@@ -110,3 +110,14 @@ def test_client_secret_upload_and_sign_in_start(env):
     r = client.post("/youtube/finish", data={"pasted": "http://localhost:8080/?state=wrong&code=x"},
                     follow_redirects=True)
     assert b"didn" in r.data  # mismatched state is refused, not a crash
+
+
+def test_logs_and_health(env):
+    import logging
+
+    from clipbot import logbuffer
+
+    client, _, _ = env
+    logbuffer.LINES.append("2026-11-01 INFO clipbot: hello from the log")
+    assert b"hello from the log" in client.get("/logs").data
+    assert client.get("/healthz").json == {"ok": True}

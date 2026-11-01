@@ -8,7 +8,7 @@ Watches a folder of exported gaming clips, converts them to vertical (9:16) Shor
 2. **Vertical render** (done): ffmpeg center crop to 1080x1920, long clips trimmed to their last 60 s.
 3. **YouTube upload** (done): Data API upload, private first, titles generated from the filename.
 4. **Web UI** (done): LAN-only page for settings, the clip queue (edit titles, approve, retry, skip, preview), and YouTube sign-in.
-5. **Unraid packaging**: container template, logs, retries, daily upload cap.
+5. **Unraid packaging** (done): prebuilt image, Unraid template, upload retries, disk cleanup, logs page.
 
 ## How the watcher works
 
@@ -43,6 +43,8 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `daily_upload_limit` | `DAILY_UPLOAD_LIMIT` | `10` | Uploads per rolling 24 h (the API allows 100); `0` = no cap |
 | `title_template` | `TITLE_TEMPLATE` | `{title}` | Wraps the generated title, e.g. `{title} #shorts` |
 | `description_template` | `DESCRIPTION_TEMPLATE` | `{title}\n\n#cs2 #counterstrike #shorts` | `{title}` and `{filename}` available |
+| `upload_retries` | `UPLOAD_RETRIES` | `3` | Retries for temporary upload errors, spaced 5 min / 30 min / 2 h / 6 h. Quota errors wait 6 h without using a retry |
+| `keep_rendered` | `KEEP_RENDERED` | `false` | Keep the rendered Short after upload (off saves disk) |
 | `tags` | `TAGS` | `cs2,counter-strike,...` | Comma-separated |
 | `anthropic_api_key` | `ANTHROPIC_API_KEY` | empty | Optional. With a key, Claude writes the titles |
 | `title_model` | `TITLE_MODEL` | `claude-opus-5-5` | Model used for titles |
@@ -71,19 +73,33 @@ Titles come from the clip's filename. The built-in rules split shorthand like `m
 4. Under **Credentials → Create credentials → OAuth client ID**, choose type **Desktop app** and download the JSON.
 5. In the web UI's **YouTube** tab, upload the JSON, click **Start sign-in**, and follow the steps there. You can also do this from a terminal with `docker exec -it clip-bot clipbot auth`.
 
-## Running it now
+## Install on Unraid
+
+The image is built by GitHub Actions on every push to `main` and published as `ghcr.io/zpdc10/clip-bot:latest`.
+
+1. **Let Unraid pull the image.** The repo is private, so the image is too. Either make the package public under GitHub → your profile → Packages → clip-bot → Package settings → Change visibility (the image holds only this code, no secrets), or run `docker login ghcr.io` on the Unraid terminal with a GitHub token that has `read:packages`.
+2. **Add the template.** On the Unraid terminal, run:
+   ```sh
+   wget -O /boot/config/plugins/dockerMan/templates-user/my-clip-bot.xml \
+     https://raw.githubusercontent.com/zpdc10/clip-bot/main/unraid/clip-bot.xml
+   ```
+   This only works if the repo is public. Otherwise, copy `unraid/clip-bot.xml` there yourself.
+3. In **Docker → Add Container**, pick **clip-bot** from the template list. Set **Clips folder** to the share Moments exports to, then click Apply.
+4. Open `http://<unraid-ip>:8765` and connect YouTube in the **YouTube** tab.
+
+Updates: when Unraid shows "update ready", click it. Settings, the queue, and the YouTube sign-in are stored in the app data folder and survive updates.
+
+The container runs as `99:100` (nobody:users) by default, via `PUID`/`PGID`, so the files in appdata stay editable from the share. It has a health check on `/healthz`.
+
+### Without the template
 
 ```sh
-docker build -t clip-bot .
-docker run -d --name clip-bot \
+docker run -d --name clip-bot --restart unless-stopped \
   -v /mnt/user/clips:/clips:ro \
   -v /mnt/user/appdata/clip-bot:/data \
   -p 8765:8765 \
-  clip-bot
-docker logs -f clip-bot
+  ghcr.io/zpdc10/clip-bot:latest
 ```
-
-Replace `/mnt/user/clips` with your export share. The share can be mounted read-only, because the bot never modifies your originals. Rendered Shorts are written to `/data/rendered/NNNNNN.mp4`. Once you're signed in to YouTube, they're uploaded one at a time, starting as private.
 
 ## Development
 

@@ -8,6 +8,7 @@ import signal
 import threading
 
 from . import config
+from .logbuffer import BufferHandler
 from .render import process_queued
 from .state import State
 from .uploader import process_rendered
@@ -36,7 +37,11 @@ def main() -> None:
         return
     data = config.data_dir()
     cfg = config.load(data)
-    logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    logging.basicConfig(level=cfg.log_level, format=fmt)
+    buf = BufferHandler()
+    buf.setFormatter(logging.Formatter(fmt, "%Y-%m-%d %H:%M:%S"))
+    logging.getLogger().addHandler(buf)
 
     state = State(data / "clipbot.db")
     restarted = state.requeue_interrupted()

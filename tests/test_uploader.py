@@ -56,16 +56,65 @@ def test_daily_limit(tmp_path):
     assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 1
 
 
-def test_failed_upload_is_recorded(tmp_path):
+def test_transient_failures_back_off_then_give_up(tmp_path):
+    from clipbot.uploader import BACKOFF
+
     state, (cid,) = setup(tmp_path)
+    t = {"now": 1_000_000.0}
+    clock = lambda: t["now"]
 
     def boom(*a):
-        raise RuntimeError("quotaExceeded")
+        raise RuntimeError("connection reset")
 
-    process_rendered(state, Config(), tmp_path, upload_fn=boom)
+    cfg = Config(upload_retries=2)
+    assert process_rendered(state, cfg, tmp_path, upload_fn=boom, clock=clock) == 1
     clip = state.get(cid)
-    assert clip.status == "failed" and "quotaExceeded" in clip.error
-    assert clip.title == "Mirage 1v3 Clutch MP9 0"  # kept for a retry
+    assert clip.status == "rendered" and clip.attempts == 1 and clip.retry_at == t["now"] + BACKOFF[0]
+    # Not retried before its time.
+    assert process_rendered(state, cfg, tmp_path, upload_fn=boom, clock=clock) == 0
+    t["now"] += BACKOFF[0]
+    process_rendered(state, cfg, tmp_path, upload_fn=boom, clock=clock)
+    assert state.get(cid).attempts == 2
+    t["now"] += BACKOFF[1]
+    process_rendered(state, cfg, tmp_path, upload_fn=boom, clock=clock)
+    clip = state.get(cid)
+    assert clip.status == "failed" and "connection reset" in clip.error
+    assert clip.title == "Mirage 1v3 Clutch MP9 0"  # kept for a manual retry
+
+
+def test_quota_errors_wait_without_using_a_retry(tmp_path):
+    from clipbot.uploader import QUOTA_WAIT
+
+    state, (cid,) = setup(tmp_path)
+
+    def quota(*a):
+        raise RuntimeError('<HttpError 403 "quotaExceeded">')
+
+    process_rendered(state, Config(), tmp_path, upload_fn=quota, clock=lambda: 100.0)
+    clip = state.get(cid)
+    assert clip.status == "rendered" and clip.attempts == 0 and clip.retry_at == 100.0 + QUOTA_WAIT
+
+
+def test_expired_sign_in_waits(tmp_path):
+    state, (cid,) = setup(tmp_path)
+
+    def expired(*a):
+        raise youtube.NotSignedIn("revoked")
+
+    assert process_rendered(state, Config(), tmp_path, upload_fn=expired, clock=lambda: 0.0) == 0
+    clip = state.get(cid)
+    assert clip.status == "rendered" and clip.attempts == 0 and "revoked" in clip.error
+
+
+def test_rendered_file_deleted_after_upload_unless_kept(tmp_path):
+    state, (a, b) = setup(tmp_path, n=2)
+    for cid in (a, b):
+        open(state.get(cid).output_path, "wb").write(b"x")
+    process_rendered(state, Config(), tmp_path, upload_fn=lambda *x: "v")
+    process_rendered(state, Config(keep_rendered=True), tmp_path, upload_fn=lambda *x: "v")
+    from pathlib import Path
+    assert not Path(state.get(a).output_path).exists()
+    assert Path(state.get(b).output_path).exists()
 
 
 def test_disabled(tmp_path):

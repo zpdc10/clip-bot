@@ -55,6 +55,10 @@ class Config:
     privacy: str = "private"
     # Uploads per rolling 24 h. YouTube's API allows 100/day; 0 = no cap.
     daily_upload_limit: int = 10
+    # Retries for upload errors that may be temporary (5 min, 30 min, 2 h, 6 h apart). Max 4.
+    upload_retries: int = 3
+    # Keep the rendered Short after it's uploaded? Off saves disk space.
+    keep_rendered: bool = False
     # {title} is the generated title.
     title_template: str = "{title}"
     # {title} and {filename} are available. Use \n for new lines.
@@ -96,6 +100,8 @@ ENV_NAMES = {
     "require_approval": "REQUIRE_APPROVAL",
     "privacy": "PRIVACY",
     "daily_upload_limit": "DAILY_UPLOAD_LIMIT",
+    "upload_retries": "UPLOAD_RETRIES",
+    "keep_rendered": "KEEP_RENDERED",
     "title_template": "TITLE_TEMPLATE",
     "description_template": "DESCRIPTION_TEMPLATE",
     "tags": "TAGS",
