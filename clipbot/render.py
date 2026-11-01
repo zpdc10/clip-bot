@@ -113,6 +113,11 @@ def process_queued(
     """Render up to `limit` queued clips. Returns how many were handled. Done in small batches
     so the main loop keeps scanning between long renders."""
     handled = 0
+    if cfg.render_ahead > 0:
+        # Don't build a pile of rendered files nobody will upload for weeks: only keep a few
+        # ready ahead of the uploader. Matters for big backlogs and the daily upload cap.
+        waiting = len(state.by_status("rendered"))
+        limit = min(limit, max(0, cfg.render_ahead - waiting))
     for clip in state.by_status("queued")[:limit]:
         if stopping():
             break

@@ -32,6 +32,7 @@ SETTINGS_LAYOUT = [
         ("crop_position", "Crop position", "0 = left edge, 0.5 = centre, 1 = right edge."),
         ("max_duration", "Max length (s)", "Longer clips are trimmed. YouTube allows up to 180. 0 = never trim."),
         ("trim", "When trimming keep", ""),
+        ("render_ahead", "Render ahead", "How many clips to keep rendered and waiting for upload. 0 = render everything immediately."),
         ("crf", "Quality (CRF)", "Lower is better quality and bigger files. 18-23 is sensible."),
         ("x264_preset", "Encode speed", "Slower presets make smaller files."),
         ("output_width", "Width", ""),
@@ -272,6 +273,8 @@ def _validated(values: dict) -> config.Config:
     cfg = config._apply(config.Config(), values, "web form")
     if not 0 <= cfg.crop_position <= 1:
         raise ValueError("crop position must be between 0 and 1")
+    if cfg.render_ahead < 0:
+        raise ValueError("render ahead can't be negative")
     if not 0 <= cfg.upload_retries <= 4:
         raise ValueError("upload retries must be between 0 and 4")
     for name in ("poll_interval", "output_width", "output_height"):

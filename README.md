@@ -35,6 +35,7 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `crop_position` | `CROP_POSITION` | `0.5` | Where the 9:16 window sits: `0` left, `0.5` centre, `1` right |
 | `max_duration` | `MAX_DURATION` | `60` | Longest Short in seconds (YouTube allows 180); `0` never trims |
 | `trim` | `TRIM` | `end` | Which part of a long clip to keep: `end` or `start` |
+| `render_ahead` | `RENDER_AHEAD` | `3` | Keep at most this many rendered Shorts waiting for upload, so a big backlog doesn't hog CPU and disk. `0` = render everything immediately |
 | `crf` | `CRF` | `20` | x264 quality, lower is better |
 | `x264_preset` | `X264_PRESET` | `medium` | x264 speed/size trade-off |
 | `output_width` / `output_height` | `OUTPUT_WIDTH` / `OUTPUT_HEIGHT` | `1080` / `1920` | Output size |
