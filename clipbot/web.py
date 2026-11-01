@@ -10,12 +10,12 @@ import logging
 import os
 import secrets
 import time
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 
-from flask import Flask, abort, flash, redirect, render_template_string, request, send_file, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, url_for
 
-from . import config, logbuffer, youtube
+from . import config, logbuffer, titles, youtube
 from .state import STATUSES, State
 
 log = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ SETTINGS_LAYOUT = [
         ("crop_position", "Crop position", "0 = left edge, 0.5 = centre, 1 = right edge."),
         ("max_duration", "Max length (s)", "Longer clips are trimmed. YouTube allows up to 180. 0 = never trim."),
         ("trim", "When trimming keep", ""),
-        ("render_ahead", "Render ahead", "How many clips to keep rendered and waiting for upload. 0 = render everything immediately."),
+        ("render_ahead", "Render ahead", "How many clips to keep rendered and waiting for upload. 0 = render everything immediately. With approval on, at least 10 are kept ready to swipe through."),
         ("crf", "Quality (CRF)", "Lower is better quality and bigger files. 18-23 is sensible."),
         ("x264_preset", "Encode speed", "Slower presets make smaller files."),
         ("output_width", "Width", ""),
@@ -95,6 +95,7 @@ def create_app(data: Path | None = None) -> Flask:
             counts = st.counts()
             uploads_24h = st.uploads_since(time.time() - 86400)
             last = st.last_upload_at()
+            to_review = sum(1 for c in st.by_status("rendered") if not c.approved)
         finally:
             st.close()
         cfg = config.load(data)
@@ -104,6 +105,7 @@ def create_app(data: Path | None = None) -> Flask:
         return render_template_string(
             _page(INDEX), next_post=next_post, clips=clips, counts=counts, status=status, cfg=cfg,
             uploads_24h=uploads_24h, fmt_time=_fmt_time, Path=Path,
+            to_review=to_review if cfg.require_approval else 0,
         )
 
     def _clip_action(clip_id: int, fn):
@@ -165,6 +167,68 @@ def create_app(data: Path | None = None) -> Flask:
             st.set_status(clip.id, "skipped")
             return f"#{clip.id} skipped. It won't be uploaded."
         return _clip_action(clip_id, fn)
+
+    @app.get("/review")
+    def review():
+        return render_template_string(REVIEW, cfg=config.load(data))
+
+    @app.get("/review/queue")
+    def review_queue():
+        """Rendered clips still waiting for a swipe, oldest first (the order they'd upload in)."""
+        st = db()
+        try:
+            clips = [c for c in st.by_status("rendered") if not c.approved]
+            counts = st.counts()
+            queued = counts["queued"] + counts["processing"]
+        finally:
+            st.close()
+        items = [
+            {"id": c.id, "name": Path(c.rel_path).name,
+             "title": c.title or titles.rule_title(Path(c.rel_path).name),
+             "video": url_for("video", clip_id=c.id)}
+            for c in clips if c.output_path and Path(c.output_path).exists()
+        ]
+        return jsonify(clips=items, queued=queued)
+
+    @app.post("/clips/<int:clip_id>/review")
+    def review_action(clip_id):
+        """JSON endpoint behind the swipe view: approve (with title), skip, or undo either."""
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        st = db()
+        try:
+            clip = st.get(clip_id)
+            if clip is None:
+                abort(404)
+            if action == "approve":
+                title = str(body.get("title", "")).strip()[:100]
+                if not title:
+                    return jsonify(error="Title can't be empty."), 400
+                if clip.status != "rendered":
+                    return jsonify(error=f"That clip is {clip.status} now."), 409
+                st.set_title(clip.id, title)
+                st.set_approved(clip.id, True)
+            elif action == "skip":
+                if clip.status != "rendered":
+                    return jsonify(error=f"That clip is {clip.status} now."), 409
+                st.set_status(clip.id, "skipped")
+            elif action == "undo":
+                if clip.status == "skipped":
+                    st.set_status(clip.id, "rendered")
+                elif clip.status == "rendered":
+                    st.set_approved(clip.id, False)
+                else:
+                    return jsonify(error=f"Too late to undo, it's {clip.status}."), 409
+            else:
+                return jsonify(error="Unknown action."), 400
+        finally:
+            st.close()
+        return jsonify(ok=True)
+
+    @app.post("/review/require-approval")
+    def turn_on_approval():
+        config.save(replace(config.load(data), require_approval=True), data)
+        return redirect(url_for("review"))
 
     @app.get("/clips/<int:clip_id>/video")
     def video(clip_id):
@@ -343,7 +407,8 @@ th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;bo
 input[type=text],input[type=number],input[type=password],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit}
 textarea{min-height:70px}
 button,.btn{font:inherit;font-size:13px;padding:6px 11px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;text-decoration:none;display:inline-block}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.reviewcta{display:block;text-align:center;margin-bottom:12px;font-size:16px;padding:12px}
+button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .row{display:grid;grid-template-columns:220px 1fr;gap:6px 16px;align-items:start;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row label{font-weight:500;padding-top:6px}
 .inline{display:flex;gap:6px}.inline input{flex:1}.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
@@ -380,6 +445,7 @@ video{width:100%;max-height:70vh}
 </style></head><body>
 <header><b>clip-bot <span class="pill sm-only {{ 'ok' if signed_in else 'no' }}">{{ 'YouTube ✓' if signed_in else 'YouTube not connected' }}</span></b>
 <nav><a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
+<a href="{{ url_for('review') }}">Review</a>
 <a href="{{ url_for('settings') }}" class="{{ 'on' if nav=='settings' }}">Settings</a>
 <a href="{{ url_for('youtube_page') }}" class="{{ 'on' if nav=='youtube_page' }}">YouTube</a>
 <a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a></nav>
@@ -392,6 +458,7 @@ __BODY__
 INDEX = """
 {% if not signed_in %}<div class="card flash">YouTube isn't connected yet, so clips will render but not upload.
 <a href="{{ url_for('youtube_page') }}">Connect YouTube</a></div>{% endif %}
+{% if to_review %}<a class="btn primary reviewcta" href="{{ url_for('review') }}">Swipe to review {{ to_review }} clip{{ 's' if to_review != 1 }}</a>{% endif %}
 <div class="counts">
 <a href="{{ url_for('index') }}" class="{{ 'on' if not status }}"><div class="card"><div class="n">{{ counts.values()|sum }}</div><div class="muted">all</div></div></a>
 {% for s in ['queued','rendered','uploaded','failed','skipped'] %}
@@ -478,3 +545,254 @@ YOUTUBE = """
 {% else %}<p class="muted">Upload the OAuth client first.</p>{% endif %}
 </div>
 """
+
+# Full-screen swipe view, built for phones. Right = approve (after a title check), left = skip,
+# up/down = next/previous clip. Talks to /review/queue and /clips/<id>/review.
+REVIEW = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#000"><title>Review · clip-bot</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#fff;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+.feed{position:fixed;inset:0;overflow-y:auto;overflow-anchor:none;scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none}
+.feed::-webkit-scrollbar{display:none}
+.slide{position:relative;height:100dvh;height:100vh;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden}
+@supports(height:100dvh){.slide{height:100dvh}}
+.card{position:absolute;inset:0;touch-action:pan-y;user-select:none;-webkit-user-select:none;will-change:transform}
+.card video{width:100%;height:100%;object-fit:contain;background:#000;display:block;pointer-events:none}
+.shade{position:absolute;left:0;right:0;bottom:0;height:45%;background:linear-gradient(transparent,rgba(0,0,0,.75));pointer-events:none}
+.info{position:absolute;left:16px;right:16px;bottom:calc(112px + env(safe-area-inset-bottom));pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+.info .t{font-size:18px;font-weight:600;word-break:break-word}.info .n{font-size:13px;opacity:.75;word-break:break-all;margin-top:2px}
+.stamp{position:absolute;top:22%;padding:6px 14px;border:4px solid;border-radius:10px;font-size:34px;font-weight:800;letter-spacing:2px;opacity:0;pointer-events:none}
+.stamp.yes{left:24px;color:#51cf66;transform:rotate(-14deg)}.stamp.no{right:24px;color:#ff6b6b;transform:rotate(14deg)}
+.paused{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:64px;opacity:0;transition:opacity .15s;pointer-events:none;text-shadow:0 2px 8px #000}
+.card.is-paused .paused{opacity:.85}
+.bar{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;background:linear-gradient(rgba(0,0,0,.6),transparent);pointer-events:none}
+.bar>*{pointer-events:auto}.bar a{color:#fff;text-decoration:none;font-weight:600;padding:6px 4px}
+.bar .count{flex:1;text-align:center;font-size:14px;opacity:.85}
+.bar button{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.15);font-size:18px}
+.notice{position:fixed;z-index:5;left:12px;right:12px;top:calc(60px + env(safe-area-inset-top));background:rgba(230,119,0,.95);color:#fff;border-radius:10px;padding:10px 12px;font-size:14px;display:flex;gap:10px;align-items:center}
+.notice form{margin:0;margin-left:auto}.notice button{background:#fff;color:#000;border-radius:8px;padding:8px 12px;font-weight:600;white-space:nowrap}
+.btns{position:fixed;z-index:4;left:0;right:0;bottom:calc(22px + env(safe-area-inset-bottom));display:flex;justify-content:center;gap:56px;pointer-events:none}
+.btns button{pointer-events:auto;width:68px;height:68px;border-radius:50%;font-size:30px;background:rgba(20,20,20,.7);border:2px solid;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);transition:transform .1s}
+.btns button:active{transform:scale(.9)}.btns .no{color:#ff6b6b}.btns .yes{color:#51cf66}
+.btns[hidden]{display:none}
+.end{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:12px}
+.end .big{font-size:48px}.end p{margin:0;opacity:.8;max-width:320px}
+.end a,.end button{color:#000;background:#fff;border-radius:10px;padding:10px 16px;font-weight:600;text-decoration:none}
+.hint{position:fixed;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);border-radius:14px;padding:16px 20px;text-align:center;line-height:1.8;transition:opacity .4s;pointer-events:none}
+.modal{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center}
+.modal[hidden]{display:none}
+.sheet{width:100%;max-width:520px;background:#1c1f26;border-radius:16px 16px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -6px 30px rgba(0,0,0,.5)}
+@media (min-width:600px){.modal{align-items:center}.sheet{border-radius:16px}}
+.sheet h2{margin:0 0 10px;font-size:17px}
+.sheet textarea{width:100%;min-height:84px;resize:none;font:inherit;font-size:17px;padding:10px 12px;border-radius:10px;border:1px solid #3a3f4b;background:#0f1115;color:#fff}
+.sheet .meta{display:flex;justify-content:space-between;font-size:12px;opacity:.65;margin:6px 2px 14px}
+.sheet .err{color:#ff8787;font-size:14px;margin-bottom:10px}
+.sheet .row{display:flex;gap:10px}.sheet .row button{flex:1;padding:13px;border-radius:10px;font-weight:600;font-size:16px;background:#2c313c}
+.sheet .row .ok{background:#2f9e44}.sheet .row .ok:disabled{opacity:.5}
+.toast{position:fixed;z-index:8;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);background:#fff;color:#000;border-radius:99px;padding:8px 8px 8px 16px;display:flex;gap:12px;align-items:center;font-size:14px;max-width:calc(100% - 24px);box-shadow:0 4px 20px rgba(0,0,0,.4)}
+.toast[hidden]{display:none}.toast span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast button{background:#000;color:#fff;border-radius:99px;padding:6px 12px;font-weight:600;flex:none}
+</style></head><body>
+<div class="bar"><a href="{{ url_for('index') }}">‹ Clips</a><span class="count" id="count">Loading…</span>
+<button id="mute" aria-label="Sound">🔇</button></div>
+{% if not cfg.require_approval %}<div class="notice"><span>Approval is off, so clips upload without waiting for a swipe.</span>
+<form method="post" action="{{ url_for('turn_on_approval') }}"><button>Turn on</button></form></div>{% endif %}
+<div class="feed" id="feed"><div class="slide end" id="end"><div class="big">⏳</div><p>Loading clips…</p></div></div>
+<div class="btns" id="btns" hidden><button class="no" id="bNo" aria-label="Skip">✕</button><button class="yes" id="bYes" aria-label="Approve">✓</button></div>
+<div class="modal" id="modal" hidden><div class="sheet" role="dialog" aria-labelledby="mh">
+<h2 id="mh">YouTube title</h2>
+<textarea id="title" maxlength="100" rows="3" enterkeyhint="done"></textarea>
+<div class="meta"><span id="mname"></span><span id="mlen"></span></div>
+<div class="err" id="merr" hidden></div>
+<div class="row"><button id="mCancel">Cancel</button><button class="ok" id="mOk">Okay</button></div>
+</div></div>
+<div class="toast" id="toast" hidden><span id="tmsg"></span><button id="tUndo">Undo</button></div>
+<script>
+(function(){
+var feed=document.getElementById('feed'), end=document.getElementById('end'), countEl=document.getElementById('count');
+var btns=document.getElementById('btns'), muteBtn=document.getElementById('mute');
+var modal=document.getElementById('modal'), titleEl=document.getElementById('title'), mErr=document.getElementById('merr');
+var toast=document.getElementById('toast'), tmsg=document.getElementById('tmsg');
+var QUEUE={{ url_for('review_queue')|tojson }}, ACT={{ url_for('review_action', clip_id=0)|tojson }};
+var muted=true, seen={}, left=0, queued=0, current=null, pending=null, lastAction=null, toastTimer=null, loading=false;
+
+function slides(){return Array.prototype.slice.call(feed.querySelectorAll('.slide[data-id]'));}
+function updateCount(){
+  left=slides().length;
+  countEl.textContent=left? left+' to review' : 'All caught up';
+  btns.hidden=!current;
+}
+function endText(){
+  var q=queued? queued+' more clip'+(queued==1?' is':'s are')+' waiting to render. They show up here when ready.' : 'New clips show up here once they finish rendering.';
+  end.innerHTML='<div class="big">🎉</div><p><b>All caught up.</b></p><p>'+q+'</p><button type="button" id="reload">Check again</button><a href="'+{{ url_for('index')|tojson }}+'">Back to clips</a>';
+  document.getElementById('reload').onclick=function(){load(true);};
+}
+
+function makeSlide(c){
+  var s=document.createElement('section'); s.className='slide'; s.dataset.id=c.id;
+  s.innerHTML='<div class="card"><video playsinline muted loop preload="none"></video><div class="shade"></div>'+
+    '<div class="info"><div class="t"></div><div class="n"></div></div>'+
+    '<div class="stamp yes">POST</div><div class="stamp no">SKIP</div><div class="paused">▶</div></div>';
+  s.clip=c; s.querySelector('video').dataset.src=c.video; setInfo(s);
+  bindSwipe(s); io.observe(s);
+  return s;
+}
+function setInfo(s){s.querySelector('.t').textContent=s.clip.title; s.querySelector('.n').textContent=s.clip.name;}
+
+function load(manual){
+  if(loading) return; loading=true;
+  fetch(QUEUE,{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    queued=d.queued;
+    var first=null;
+    d.clips.forEach(function(c){ if(!seen[c.id]){ seen[c.id]=1; var s=makeSlide(c); feed.insertBefore(s, end); first=first||s; } });
+    endText();
+    // Snapping would otherwise stay on the "all caught up" slide; jump to the first new clip.
+    if(!current && first){ feed.scrollTop=first.offsetTop; activate(first); }
+    updateCount();
+  }).catch(function(){ if(manual) alert("Couldn't reach clip-bot."); }).then(function(){loading=false;});
+}
+
+// Play whatever slide is on screen; keep only neighbours loaded so phones don't run out of memory.
+var io=new IntersectionObserver(function(es){
+  es.forEach(function(e){ if(e.isIntersecting && e.intersectionRatio>0.6) activate(e.target); });
+},{root:feed,threshold:[0.6]});
+io.observe(end);
+function activate(s){
+  if(!s) return;
+  current=s.dataset.id? s : null;
+  var all=Array.prototype.slice.call(feed.children), i=all.indexOf(s);
+  all.forEach(function(x,j){
+    var v=x.querySelector('video'); if(!v) return;
+    if(Math.abs(j-i)<=1){ if(!v.getAttribute('src')){ v.src=v.dataset.src; v.preload='auto'; } }
+    else if(v.getAttribute('src')){ v.pause(); v.removeAttribute('src'); v.load(); }
+    if(j===i){ v.muted=muted; var p=v.play(); if(p&&p.catch)p.catch(function(){}); x.querySelector('.card').classList.remove('is-paused'); }
+    else v.pause();
+  });
+  updateCount();
+  if(!current && !loading) load(false);
+}
+function curVideo(){return current&&current.querySelector('video');}
+
+muteBtn.onclick=function(){ muted=!muted; muteBtn.textContent=muted?'🔇':'🔊'; var v=curVideo(); if(v){v.muted=muted; if(v.paused)v.play().catch(function(){});} };
+
+function bindSwipe(s){
+  var card=s.querySelector('.card'), yes=s.querySelector('.stamp.yes'), no=s.querySelector('.stamp.no');
+  var st=null, dx=0, drag=false;
+  function setX(x,anim){
+    card.style.transition=anim?'transform .25s ease-out':'none';
+    card.style.transform=x?'translateX('+x+'px) rotate('+(x/18)+'deg)':'';
+    var w=feed.clientWidth*0.25;
+    yes.style.opacity=Math.max(0,Math.min(1,x/w)); no.style.opacity=Math.max(0,Math.min(1,-x/w));
+  }
+  s.reset=function(){setX(0,true);};
+  s.fly=function(dir,then){ setX(dir*feed.clientWidth*1.3,true); setTimeout(then,230); };
+  card.addEventListener('pointerdown',function(e){ if(e.button>0) return; st={x:e.clientX,y:e.clientY,t:Date.now()}; dx=0; drag=false; });
+  card.addEventListener('pointermove',function(e){
+    if(!st) return;
+    var mx=e.clientX-st.x, my=e.clientY-st.y;
+    if(!drag){
+      if(Math.abs(mx)>12 && Math.abs(mx)>Math.abs(my)*1.3){ drag=true; try{card.setPointerCapture(e.pointerId);}catch(_){} }
+      else if(Math.abs(my)>12){ st=null; return; }
+      else return;
+    }
+    dx=mx; setX(dx,false);
+  });
+  card.addEventListener('pointerup',function(e){
+    if(!st) return;
+    var dt=Date.now()-st.t, fast=Math.abs(dx)/Math.max(dt,1)>0.6 && Math.abs(dx)>50;
+    if(drag){
+      if(dx>feed.clientWidth*0.28 || (fast&&dx>0)) approve(s);
+      else if(dx<-feed.clientWidth*0.28 || (fast&&dx<0)) skip(s);
+      else setX(0,true);
+    } else if(dt<350){ togglePlay(s); }
+    st=null; drag=false;
+  });
+  card.addEventListener('pointercancel',function(){ st=null; if(drag) setX(0,true); drag=false; });
+}
+function togglePlay(s){
+  var v=s.querySelector('video'), card=s.querySelector('.card');
+  if(v.paused){ v.play().catch(function(){}); card.classList.remove('is-paused'); }
+  else { v.pause(); card.classList.add('is-paused'); }
+}
+
+function post(id,body){
+  return fetch(ACT.replace('/0/','/'+id+'/'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(d){ if(!r.ok) throw new Error(d.error||('Error '+r.status)); return d; });});
+}
+
+function approve(s){
+  if(!s || pending) return;
+  pending=s; s.fly(1,function(){});
+  var v=s.querySelector('video'); v.pause();
+  titleEl.value=s.clip.title; mErr.hidden=true; document.getElementById('mname').textContent=s.clip.name;
+  lenUpdate(); modal.hidden=false;
+  setTimeout(function(){ titleEl.focus(); titleEl.setSelectionRange(titleEl.value.length,titleEl.value.length); },50);
+}
+function lenUpdate(){ var n=titleEl.value.trim().length; document.getElementById('mlen').textContent=n+'/100'; document.getElementById('mOk').disabled=!n; }
+titleEl.addEventListener('input',lenUpdate);
+titleEl.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); confirmApprove(); } });
+function closeModal(){ modal.hidden=true; titleEl.blur(); }
+document.getElementById('mCancel').onclick=function(){
+  var s=pending; pending=null; closeModal();
+  if(s){ s.reset(); s.querySelector('video').play().catch(function(){}); }
+};
+modal.addEventListener('click',function(e){ if(e.target===modal) document.getElementById('mCancel').onclick(); });
+function confirmApprove(){
+  var s=pending, t=titleEl.value.trim(); if(!s||!t) return;
+  var ok=document.getElementById('mOk'); ok.disabled=true;
+  post(s.dataset.id,{action:'approve',title:t}).then(function(){
+    var old=s.clip.title; s.clip.title=t; setInfo(s); pending=null; closeModal();
+    done(s,'Approved: '+t,{oldTitle:old});
+  }).catch(function(err){ mErr.textContent=err.message; mErr.hidden=false; lenUpdate(); });
+}
+document.getElementById('mOk').onclick=confirmApprove;
+
+function skip(s){
+  if(!s || pending) return;
+  pending=s;
+  s.fly(-1,function(){
+    post(s.dataset.id,{action:'skip'}).then(function(){ pending=null; done(s,'Skipped '+s.clip.name,{}); })
+      .catch(function(err){ pending=null; s.reset(); showToast(err.message,false); });
+  });
+}
+
+// Take the slide out of the feed; the next one slides into its place.
+function done(s,msg,extra){
+  var next=s.nextElementSibling; s.querySelector('video').pause();
+  lastAction={slide:s,next:next,extra:extra};
+  io.unobserve(s); s.remove(); current=null;
+  requestAnimationFrame(function(){ activate(next); });
+  showToast(msg,true);
+}
+function showToast(msg,undo){
+  tmsg.textContent=msg; document.getElementById('tUndo').hidden=!undo; toast.hidden=false;
+  clearTimeout(toastTimer); toastTimer=setTimeout(function(){toast.hidden=true; lastAction=null;},5000);
+}
+document.getElementById('tUndo').onclick=function(){
+  var a=lastAction; if(!a) return; lastAction=null; toast.hidden=true;
+  post(a.slide.dataset.id,{action:'undo'}).then(function(){
+    var s=a.slide; s.querySelector('.card').style.cssText=''; s.querySelectorAll('.stamp').forEach(function(x){x.style.opacity=0;});
+    feed.insertBefore(s,(a.next&&a.next.parentNode)?a.next:end); io.observe(s);
+    s.scrollIntoView(); activate(s);
+  }).catch(function(err){ showToast(err.message,false); });
+};
+
+document.getElementById('bYes').onclick=function(){ approve(current); };
+document.getElementById('bNo').onclick=function(){ skip(current); };
+document.addEventListener('keydown',function(e){
+  if(!modal.hidden){ if(e.key==='Escape') document.getElementById('mCancel').onclick(); return; }
+  if(e.key==='ArrowRight') approve(current);
+  else if(e.key==='ArrowLeft') skip(current);
+  else if(e.key===' '&&current){ e.preventDefault(); togglePlay(current); }
+});
+setInterval(function(){ if(!current && modal.hidden) load(false); },20000);
+load(false);
+try{ if(!sessionStorage.getItem('clipbot-hint')){ sessionStorage.setItem('clipbot-hint','1');
+  var h=document.createElement('div'); h.className='hint'; h.innerHTML='👉 Swipe right to post<br>👈 Swipe left to skip<br>👆 Swipe up for the next clip';
+  document.body.appendChild(h); setTimeout(function(){h.style.opacity=0;},2600); setTimeout(function(){h.remove();},3200); } }catch(_){}
+})();
+</script></body></html>"""
