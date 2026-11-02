@@ -128,13 +128,19 @@ def create_app(data: Path | None = None) -> Flask:
         def fn(st, clip):
             if not title:
                 return "Title can't be empty."
-            st.set_title(clip.id, title)
+            if not st.set_title(clip.id, title):
+                return f"#{clip.id} is already {st.get(clip.id).status}, so its title can't change any more."
             return f"Saved title for #{clip.id}."
         return _clip_action(clip_id, fn)
 
     @app.post("/clips/<int:clip_id>/approve")
     def approve(clip_id):
+        # The Approve button submits the title box too, so a typed title isn't lost by not pressing Save.
+        title = request.form.get("title", "").strip()[:100]
+
         def fn(st, clip):
+            if title and title != clip.title and not st.set_title(clip.id, title):
+                return f"#{clip.id} is already {st.get(clip.id).status}, so its title can't change any more."
             st.set_approved(clip.id, True)
             return f"#{clip.id} approved for upload."
         return _clip_action(clip_id, fn)
@@ -153,7 +159,7 @@ def create_app(data: Path | None = None) -> Flask:
     @app.post("/clips/<int:clip_id>/rerender")
     def rerender(clip_id):
         def fn(st, clip):
-            if clip.status == "uploaded":
+            if clip.status in ("uploaded", "uploading"):
                 return "That clip is already on YouTube."
             st.set_status(clip.id, "queued")
             return f"#{clip.id} will be rendered again with the current settings."
@@ -162,7 +168,7 @@ def create_app(data: Path | None = None) -> Flask:
     @app.post("/clips/<int:clip_id>/skip")
     def skip(clip_id):
         def fn(st, clip):
-            if clip.status in ("uploaded", "processing"):
+            if clip.status in ("uploaded", "uploading", "processing"):
                 return f"Can't skip a clip that's {clip.status}."
             st.set_status(clip.id, "skipped")
             return f"#{clip.id} skipped. It won't be uploaded."
@@ -204,9 +210,9 @@ def create_app(data: Path | None = None) -> Flask:
                 title = str(body.get("title", "")).strip()[:100]
                 if not title:
                     return jsonify(error="Title can't be empty."), 400
-                if clip.status != "rendered":
-                    return jsonify(error=f"That clip is {clip.status} now."), 409
-                st.set_title(clip.id, title)
+                if clip.status != "rendered" or not st.set_title(clip.id, title):
+                    now = st.get(clip.id).status
+                    return jsonify(error=f"Too late, that clip is {now} now, so the title can't change."), 409
                 st.set_approved(clip.id, True)
             elif action == "skip":
                 if clip.status != "rendered":
@@ -402,7 +408,7 @@ main{max-width:1100px;margin:0 auto;padding:20px 16px}
 table{width:100%;border-collapse:collapse}td,th{padding:9px 6px;border-top:1px solid var(--line);vertical-align:top;text-align:left}
 th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;border-top:0}
 .s{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
-.s-uploaded{color:var(--ok)}.s-failed{color:var(--bad)}.s-rendered{color:var(--accent)}.s-processing,.s-queued{color:var(--warn)}.s-skipped{color:var(--muted)}
+.s-uploaded,.s-uploading{color:var(--ok)}.s-failed{color:var(--bad)}.s-rendered{color:var(--accent)}.s-processing,.s-queued{color:var(--warn)}.s-skipped{color:var(--muted)}
 .muted{color:var(--muted);font-size:13px}.err{color:var(--bad);font-size:13px;word-break:break-word}
 input[type=text],input[type=number],input[type=password],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);font:inherit}
 textarea{min-height:70px}
@@ -464,7 +470,7 @@ INDEX = """
 <div class="counts">
 <a href="{{ url_for('index') }}" class="{{ 'on' if not status }}"><div class="card"><div class="n">{{ counts.values()|sum }}</div><div class="muted">all</div></div></a>
 {% for s in ['queued','rendered','uploaded','failed','skipped'] %}
-<a href="{{ url_for('index', status=s) }}" class="{{ 'on' if status==s }}"><div class="card"><div class="n">{{ counts[s] + (counts['processing'] if s=='queued' else 0) }}</div><div class="muted">{{ s }}</div></div></a>
+<a href="{{ url_for('index', status=s) }}" class="{{ 'on' if status==s }}"><div class="card"><div class="n">{{ counts[s] + (counts['processing'] if s=='queued' else 0) + (counts['uploading'] if s=='uploaded' else 0) }}</div><div class="muted">{{ s }}</div></div></a>
 {% endfor %}</div>
 <p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}{% if next_post %} · next post after {{ next_post }}{% endif %} · new uploads are <b>{{ cfg.privacy }}</b>{% if cfg.require_approval %} · approval required{% endif %}{% if not cfg.upload_enabled %} · uploading is off{% endif %}
 · <a href="{{ request.full_path }}">refresh</a></p>
@@ -477,13 +483,13 @@ INDEX = """
 {% if c.status=='rendered' and c.retry_at %}<div class="muted">retry after {{ fmt_time(c.retry_at) }}</div>{% endif %}
 {% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a>{% if c.privacy %} · <span class="{{ 'err' if c.privacy != 'public' }}">{{ c.privacy }}</span>{% endif %}</div>{% endif %}</td>
 <td class="c-title">
-{% if c.status in ['uploaded'] %}{{ c.title }}
-{% else %}<form method="post" action="{{ url_for('set_title', clip_id=c.id) }}" class="inline">
+{% if c.status in ['uploaded','uploading'] %}{{ c.title }}
+{% else %}<form method="post" action="{{ url_for('set_title', clip_id=c.id) }}" class="inline" id="tf-{{ c.id }}">
 <input type="hidden" name="next" value="{{ request.full_path }}">
 <input type="text" name="title" maxlength="100" value="{{ c.title or '' }}" placeholder="{{ 'generated after rendering' if not c.title }}"><button>Save</button></form>{% endif %}
 {% if c.error %}<div class="err">{{ c.error[:300] }}</div>{% endif %}
 <div class="actions">
-{% if c.status=='rendered' and cfg.require_approval and not c.approved %}<form method="post" action="{{ url_for('approve', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button class="primary">Approve</button></form>{% endif %}
+{% if c.status=='rendered' and cfg.require_approval and not c.approved %}<button class="primary" form="tf-{{ c.id }}" formaction="{{ url_for('approve', clip_id=c.id) }}">Approve</button>{% endif %}
 {% if c.status in ['failed','skipped'] or (c.status=='rendered' and c.retry_at) %}<form method="post" action="{{ url_for('retry', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Retry</button></form>{% endif %}
 {% if c.status in ['rendered','failed','skipped'] %}<form method="post" action="{{ url_for('rerender', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Re-render</button></form>{% endif %}
 {% if c.status in ['queued','rendered','failed'] %}<form method="post" action="{{ url_for('skip', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Skip</button></form>{% endif %}

@@ -177,3 +177,32 @@ def test_warns_when_uploads_are_not_public(env):
     assert b"get no views" in page and b"vid1" in page
     (tmp_path / config.SETTINGS_FILE).write_text(json.dumps({"privacy": "public"}))
     assert b"get no views" not in client.get("/").data
+
+
+def test_title_edits_refused_once_upload_starts(env, tmp_path):
+    client, state, data = env
+    config.save(config.Config(require_approval=True), data)
+    out = tmp_path / "1.mp4"
+    out.write_bytes(b"video")
+    a = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
+    state.set_status(a.id, "rendered", output_path=str(out))
+    state.set_title(a.id, "Generated")
+    state.start_upload(a.id)
+
+    r = client.post(f"/clips/{a.id}/review", json={"action": "approve", "title": "Edited"})
+    assert r.status_code == 409 and "uploading" in r.json["error"]
+    client.post(f"/clips/{a.id}/title", data={"title": "Edited"})
+    assert state.get(a.id).title == "Generated"
+
+
+def test_approve_button_saves_the_typed_title(env, tmp_path):
+    client, state, data = env
+    config.save(config.Config(require_approval=True), data)
+    a = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
+    state.set_status(a.id, "rendered", output_path=str(tmp_path / "1.mp4"))
+    state.set_title(a.id, "Generated")
+    page = client.get("/").data.decode()
+    assert f'form="tf-{a.id}"' in page and f'id="tf-{a.id}"' in page
+    client.post(f"/clips/{a.id}/approve", data={"title": "Typed but not saved"})
+    clip = state.get(a.id)
+    assert clip.approved and clip.title == "Typed but not saved"

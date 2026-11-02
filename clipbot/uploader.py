@@ -83,10 +83,14 @@ def process_rendered(
     if not in_window(window, lt.tm_hour * 60 + lt.tm_min):
         return 0
 
-    clip = pending[0]
-    title = clip.title
-    full_title = cfg.title_template.format(title=title)[:100]
+    # Claim the clip first, then read its title: from here on the web UI refuses title edits,
+    # so the title that goes to YouTube is the last one saved.
+    clip = state.start_upload(pending[0].id)
+    if clip is None:
+        return 1
     try:
+        title = clip.title or titles.make_title(clip.rel_path, cfg.anthropic_api_key, cfg.title_model)
+        full_title = cfg.title_template.format(title=title)[:100]
         result = upload_fn(
             data, Path(clip.output_path), full_title, describe(cfg, title, clip.rel_path),
             [t.strip() for t in cfg.tags.split(",") if t.strip()], cfg.privacy, cfg.upload_limit_mbps,
