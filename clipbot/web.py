@@ -580,7 +580,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .bar{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;background:linear-gradient(rgba(0,0,0,.6),transparent);pointer-events:none}
 .bar>*{pointer-events:auto}.bar a{color:#fff;text-decoration:none;font-weight:600;padding:6px 4px}
 .bar .count{flex:1;text-align:center;font-size:14px;opacity:.85}
-.bar button{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.15);font-size:18px}
+.bar button{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.15);font-size:18px;flex:none}
+.bar .vol{width:96px;flex:none;accent-color:#fff;margin:0}
 .notice{position:fixed;z-index:5;left:12px;right:12px;top:calc(60px + env(safe-area-inset-top));background:rgba(230,119,0,.95);color:#fff;border-radius:10px;padding:10px 12px;font-size:14px;display:flex;gap:10px;align-items:center}
 .notice form{margin:0;margin-left:auto}.notice button{background:#fff;color:#000;border-radius:8px;padding:8px 12px;font-weight:600;white-space:nowrap}
 .btns{position:fixed;z-index:4;left:0;right:0;bottom:calc(22px + env(safe-area-inset-bottom));display:flex;justify-content:center;gap:56px;pointer-events:none}
@@ -606,6 +607,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .toast button{background:#000;color:#fff;border-radius:99px;padding:6px 12px;font-weight:600;flex:none}
 </style></head><body>
 <div class="bar"><a href="{{ url_for('index') }}">‹ Clips</a><span class="count" id="count">Loading…</span>
+<input type="range" class="vol" id="vol" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (only for reviewing here, uploads are unaffected)">
 <button id="mute" aria-label="Sound">🔇</button></div>
 {% if not cfg.require_approval %}<div class="notice"><span>Approval is off, so clips upload without waiting for a swipe.</span>
 <form method="post" action="{{ url_for('turn_on_approval') }}"><button>Turn on</button></form></div>{% endif %}
@@ -622,11 +624,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 <script>
 (function(){
 var feed=document.getElementById('feed'), end=document.getElementById('end'), countEl=document.getElementById('count');
-var btns=document.getElementById('btns'), muteBtn=document.getElementById('mute');
+var btns=document.getElementById('btns'), muteBtn=document.getElementById('mute'), volEl=document.getElementById('vol');
 var modal=document.getElementById('modal'), titleEl=document.getElementById('title'), mErr=document.getElementById('merr');
 var toast=document.getElementById('toast'), tmsg=document.getElementById('tmsg');
 var QUEUE={{ url_for('review_queue')|tojson }}, ACT={{ url_for('review_action', clip_id=0)|tojson }};
-var muted=true, seen={}, left=0, queued=0, current=null, pending=null, lastAction=null, toastTimer=null, loading=false;
+var muted=true, volume=1, seen={}, left=0, queued=0, current=null, pending=null, lastAction=null, toastTimer=null, loading=false;
 
 function slides(){return Array.prototype.slice.call(feed.querySelectorAll('.slide[data-id]'));}
 function updateCount(){
@@ -677,7 +679,7 @@ function activate(s){
     var v=x.querySelector('video'); if(!v) return;
     if(Math.abs(j-i)<=1){ if(!v.getAttribute('src')){ v.src=v.dataset.src; v.preload='auto'; } }
     else if(v.getAttribute('src')){ v.pause(); v.removeAttribute('src'); v.load(); }
-    if(j===i){ v.muted=muted; var p=v.play(); if(p&&p.catch)p.catch(function(){}); x.querySelector('.card').classList.remove('is-paused'); }
+    if(j===i){ v.muted=muted; v.volume=volume; var p=v.play(); if(p&&p.catch)p.catch(function(){}); x.querySelector('.card').classList.remove('is-paused'); }
     else v.pause();
   });
   updateCount();
@@ -685,7 +687,21 @@ function activate(s){
 }
 function curVideo(){return current&&current.querySelector('video');}
 
-muteBtn.onclick=function(){ muted=!muted; muteBtn.textContent=muted?'🔇':'🔊'; var v=curVideo(); if(v){v.muted=muted; if(v.paused)v.play().catch(function(){});} };
+function setMuted(m){ muted=m; muteBtn.textContent=muted?'🔇':'🔊'; var v=curVideo(); if(v){v.muted=muted; if(!muted&&v.paused)v.play().catch(function(){});} }
+muteBtn.onclick=function(){ setMuted(!muted); };
+
+// Playback volume for reviewing only: it changes the <video> element here, never the rendered file or the upload.
+// Remembered per browser.
+try{ var sv=localStorage.getItem('clipbot.reviewVolume'); if(sv!==null && !isNaN(+sv)) volume=Math.max(0,Math.min(1,+sv)); }catch(_){}
+volEl.value=Math.round(volume*100);
+volEl.addEventListener('input',function(){
+  volume=volEl.value/100;
+  try{ localStorage.setItem('clipbot.reviewVolume',String(volume)); }catch(_){}
+  var v=curVideo(); if(v) v.volume=volume;
+  if(volume>0 && muted) setMuted(false); else if(volume===0 && !muted) setMuted(true);
+});
+// Keep slider drags from scrolling or swiping the feed.
+['pointerdown','touchstart'].forEach(function(t){ volEl.addEventListener(t,function(e){e.stopPropagation();},{passive:true}); });
 
 function bindSwipe(s){
   var card=s.querySelector('.card'), yes=s.querySelector('.stamp.yes'), no=s.querySelector('.stamp.no');
@@ -793,6 +809,7 @@ document.getElementById('bYes').onclick=function(){ approve(current); };
 document.getElementById('bNo').onclick=function(){ skip(current); };
 document.addEventListener('keydown',function(e){
   if(!modal.hidden){ if(e.key==='Escape') document.getElementById('mCancel').onclick(); return; }
+  if(e.target===volEl) return; // arrow keys adjust the volume slider, not approve/skip
   if(e.key==='ArrowRight') approve(current);
   else if(e.key==='ArrowLeft') skip(current);
   else if(e.key===' '&&current){ e.preventDefault(); togglePlay(current); }
