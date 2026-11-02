@@ -209,3 +209,35 @@ def test_plain_id_falls_back_to_configured_privacy(tmp_path):
     state, (cid,) = setup(tmp_path)
     process_rendered(state, Config(privacy="unlisted"), tmp_path, upload_fn=lambda *a: "vid2")
     assert state.get(cid).privacy == "unlisted"
+
+
+def test_title_edit_made_just_before_upload_is_used(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    # The worker's list of rendered clips was read before this edit landed.
+    state.set_title(cid, "My edited title")
+    calls = []
+    process_rendered(state, Config(), tmp_path, upload_fn=lambda d, v, title, *a: calls.append(title) or "vid")
+    assert calls == ["My edited title"]
+
+
+def test_title_is_locked_while_uploading(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    seen = {}
+
+    def slow_upload(data, video, title, *a):
+        # Someone edits the title in the web UI mid-upload: refused, not silently dropped.
+        assert state.get(cid).status == "uploading"
+        seen["saved"] = state.set_title(cid, "Too late")
+        return "vid"
+
+    process_rendered(state, Config(), tmp_path, upload_fn=slow_upload)
+    assert seen["saved"] is False
+    assert state.get(cid).status == "uploaded" and state.get(cid).title != "Too late"
+
+
+def test_interrupted_upload_is_retried_after_restart(tmp_path):
+    state, (cid,) = setup(tmp_path)
+    assert state.start_upload(cid).status == "uploading"
+    assert state.start_upload(cid) is None
+    assert state.requeue_interrupted() == 1
+    assert state.get(cid).status == "rendered"

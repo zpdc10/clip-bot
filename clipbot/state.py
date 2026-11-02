@@ -23,9 +23,11 @@ CREATE INDEX IF NOT EXISTS clips_status ON clips(status);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
-# Lifecycle: queued -> processing -> rendered -> uploaded, or failed at any point.
+# Lifecycle: queued -> processing -> rendered -> uploading -> uploaded, or failed at any point.
 # "skipped" is set from the web UI for clips that should never be uploaded.
-STATUSES = ("queued", "processing", "rendered", "uploaded", "failed", "skipped")
+STATUSES = ("queued", "processing", "rendered", "uploading", "uploaded", "failed", "skipped")
+# Once a clip is in one of these, its title has gone (or is going) to YouTube and can't change here.
+TITLE_LOCKED = ("uploading", "uploaded")
 
 
 @dataclass(frozen=True)
@@ -106,9 +108,25 @@ class State:
         )
         self._db.commit()
 
-    def set_title(self, clip_id: int, title: str) -> None:
-        self._db.execute("UPDATE clips SET title = ?, updated_at = ? WHERE id = ?", (title, time.time(), clip_id))
+    def set_title(self, clip_id: int, title: str) -> bool:
+        """Save a title. Returns False (and changes nothing) if the clip is uploading or uploaded,
+        so an edit can never be silently dropped by an upload that already read the old title."""
+        cur = self._db.execute(
+            "UPDATE clips SET title = ?, updated_at = ? WHERE id = ? AND status NOT IN (?, ?)",
+            (title, time.time(), clip_id, *TITLE_LOCKED),
+        )
         self._db.commit()
+        return cur.rowcount > 0
+
+    def start_upload(self, clip_id: int) -> Clip | None:
+        """Claim a rendered clip for upload and return it as it is now (with the latest title).
+        Returns None if it's no longer rendered, e.g. skipped in the web UI a moment ago."""
+        cur = self._db.execute(
+            "UPDATE clips SET status = 'uploading', updated_at = ? WHERE id = ? AND status = 'rendered'",
+            (time.time(), clip_id),
+        )
+        self._db.commit()
+        return self.get(clip_id) if cur.rowcount else None
 
     def mark_uploaded(self, clip_id: int, video_id: str, when: float, privacy: str | None = None) -> None:
         self._db.execute(
@@ -179,12 +197,14 @@ class State:
         return True
 
     def requeue_interrupted(self) -> int:
-        """Clips left 'processing' by a crash or restart go back to the queue."""
-        cur = self._db.execute(
-            "UPDATE clips SET status = 'queued', updated_at = ? WHERE status = 'processing'", (time.time(),)
-        )
+        """Clips left 'processing' by a crash or restart go back to the queue, and clips left
+        'uploading' go back to 'rendered' so the upload is tried again."""
+        now = time.time()
+        cur = self._db.execute("UPDATE clips SET status = 'queued', updated_at = ? WHERE status = 'processing'", (now,))
+        n = cur.rowcount
+        cur = self._db.execute("UPDATE clips SET status = 'rendered', updated_at = ? WHERE status = 'uploading'", (now,))
         self._db.commit()
-        return cur.rowcount
+        return n + cur.rowcount
 
 
 def _to_clip(row: sqlite3.Row) -> Clip:
