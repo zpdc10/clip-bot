@@ -290,3 +290,18 @@ def test_interrupted_upload_is_retried_after_restart(tmp_path):
     assert state.start_upload(cid) is None
     assert state.requeue_interrupted() == 1
     assert state.get(cid).status == "rendered"
+
+
+def test_audit_lists_unapproved_uploads(tmp_path, monkeypatch, capsys):
+    from clipbot import main
+
+    state, (a, b) = setup(tmp_path, n=2)
+    state.mark_uploaded(a, "vidA", 1.0)
+    state._db.execute("UPDATE clips SET approved = 0, status = 'uploaded', video_id = 'vidB' WHERE id = ?", (b,))
+    state._db.commit()
+    (tmp_path / "db.sqlite").rename(tmp_path / "clipbot.db")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    main.audit()
+    out = capsys.readouterr().out
+    assert "2 uploaded: 1 approved, 1 NOT approved" in out
+    assert f"NOT APPROVED #{b}" in out and "vidB" in out
