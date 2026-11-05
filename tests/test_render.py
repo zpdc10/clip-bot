@@ -108,6 +108,7 @@ def test_render_ahead_limits_backlog(tmp_path, monkeypatch):
         (clips / f"{i}.mp4").write_bytes(b"x")
         state.enqueue(str(i), f"{i}.mp4", 1)
     monkeypatch.setattr(r, "render", lambda src, dst, cfg: dst)
+    monkeypatch.setattr(r, "REVIEW_AHEAD", 0)  # test render_ahead on its own
     cfg = Config(watch_dir=str(clips), render_ahead=2)
     out = tmp_path / "out"
     assert process_queued(state, cfg, out, limit=10) == 2
@@ -118,7 +119,7 @@ def test_render_ahead_limits_backlog(tmp_path, monkeypatch):
     assert process_queued(state, Config(watch_dir=str(clips), render_ahead=0), out, limit=10) == 2
 
 
-def test_render_ahead_keeps_a_review_stack_when_approval_is_on(tmp_path, monkeypatch):
+def test_render_ahead_keeps_a_review_stack(tmp_path, monkeypatch):
     import clipbot.render as r
 
     clips = tmp_path / "clips"
@@ -128,7 +129,7 @@ def test_render_ahead_keeps_a_review_stack_when_approval_is_on(tmp_path, monkeyp
         (clips / f"{i}.mp4").write_bytes(b"x")
         state.enqueue(str(i), f"{i}.mp4", 1)
     monkeypatch.setattr(r, "render", lambda src, dst, cfg: dst)
-    cfg = Config(watch_dir=str(clips), render_ahead=2, require_approval=True)
+    cfg = Config(watch_dir=str(clips), render_ahead=2)
     out = tmp_path / "out"
     assert process_queued(state, cfg, out, limit=20) == r.REVIEW_AHEAD
     assert process_queued(state, cfg, out, limit=20) == 0

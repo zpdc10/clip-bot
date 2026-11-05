@@ -1,10 +1,17 @@
 from clipbot import youtube
 from clipbot.config import Config
 from clipbot.state import State
-from clipbot.uploader import DAY, process_rendered
+from clipbot.uploader import APPROVAL_GRACE, DAY, process_rendered
 
 
-def setup(tmp_path, n=1, signed_in=True):
+def approve_long_ago(state, cid):
+    """Approve a clip, dated far enough back that the post-approval grace period is over."""
+    assert state.set_approved(cid)
+    state._db.execute("UPDATE clips SET approved_at = -1e12 WHERE id = ?", (cid,))
+    state._db.commit()
+
+
+def setup(tmp_path, n=1, signed_in=True, approved=True):
     state = State(tmp_path / "db.sqlite")
     ids = []
     for i in range(n):
@@ -16,6 +23,9 @@ def setup(tmp_path, n=1, signed_in=True):
     # First pass(es) only generate titles.
     for _ in ids:
         assert process_rendered(state, Config(upload_enabled=False), tmp_path, upload_fn=lambda *a: 1 / 0) == 1
+    if approved:
+        for cid in ids:
+            approve_long_ago(state, cid)
     return state, ids
 
 
@@ -135,13 +145,52 @@ def test_titles_generated_before_upload_even_when_disabled(tmp_path):
     assert state.get(cid).status == "rendered"
 
 
-def test_require_approval(tmp_path):
-    state, (cid,) = setup(tmp_path)
-    cfg = Config(require_approval=True)
-    assert process_rendered(state, cfg, tmp_path, upload_fn=lambda *a: "v") == 0
-    state.set_approved(cid)
-    assert process_rendered(state, cfg, tmp_path, upload_fn=lambda *a: "v") == 1
+def test_nothing_uploads_without_approval(tmp_path):
+    state, (cid,) = setup(tmp_path, approved=False)
+    up = lambda *a: "v"
+    # No setting turns this off, including an old settings.json that still says approval is off.
+    (tmp_path / "settings.json").write_text('{"require_approval": false}')
+    from clipbot import config
+    cfg = config.load(tmp_path)
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up) == 0
+    assert state.start_upload(cid) is None  # the claim itself refuses unapproved clips
+    assert state.get(cid).status == "rendered"
+
+    t = {"now": 0.0}
+    clock = lambda: t["now"]
+    assert state.set_approved(cid)
+    t["now"] = state.get(cid).approved_at + 5
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 0  # grace period for Undo
+    state.set_approved(cid, False)  # Undo
+    t["now"] += APPROVAL_GRACE * 10
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 0
+    assert state.get(cid).status == "rendered"
+
+    assert state.set_approved(cid)
+    t["now"] = state.get(cid).approved_at + APPROVAL_GRACE
+    assert process_rendered(state, cfg, tmp_path, upload_fn=up, clock=clock) == 1
     assert state.get(cid).status == "uploaded"
+
+
+def test_skip_and_rerender_withdraw_approval(tmp_path):
+    state, (a, b) = setup(tmp_path, n=2)
+    up = lambda *x: "v"
+    state.set_status(a, "skipped")
+    state.set_status(a, "rendered")  # Retry / Undo of a skip
+    state.set_status(b, "queued")  # Re-render
+    state.set_status(b, "processing")
+    state.set_status(b, "rendered", output_path=str(tmp_path / "b.mp4"))
+    assert not state.get(a).approved and not state.get(b).approved
+    assert process_rendered(state, Config(post_interval_minutes=0), tmp_path, upload_fn=up) == 0
+    assert not state.set_approved(999)
+
+
+def test_interrupted_upload_resumes_only_if_approved(tmp_path):
+    state, (a,) = setup(tmp_path)
+    state.start_upload(a)
+    state.requeue_interrupted()
+    clip = state.get(a)
+    assert clip.status == "rendered" and clip.approved
 
 
 def test_edited_title_is_used(tmp_path):

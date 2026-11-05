@@ -38,7 +38,7 @@ def test_save_settings_roundtrip(env):
     assert b"Settings saved" in r.data
     cfg = config.load(data)
     assert cfg.crop_position == 0.3 and cfg.privacy == "unlisted"
-    assert cfg.upload_enabled is True and cfg.require_approval is False
+    assert cfg.upload_enabled is True and not hasattr(cfg, 'require_approval')
     assert cfg.anthropic_api_key == "sk-secret"
     assert b"sk-secret" not in client.get("/settings").data  # never echoed back
 
@@ -135,10 +135,7 @@ def test_swipe_review_flow(env, tmp_path):
     state.set_title(a.id, "Mirage 1v3 clutch")
 
     page = client.get("/review")
-    assert page.status_code == 200 and b"Approval is off" in page.data
-    client.post("/review/require-approval")
-    assert config.load(data).require_approval is True
-    assert b"Approval is off" not in client.get("/review").data
+    assert page.status_code == 200 and b"Approval is off" not in page.data
     assert b"Swipe to review 2 clips" in client.get("/").data
 
     q = client.get("/review/queue").json
@@ -181,13 +178,13 @@ def test_warns_when_uploads_are_not_public(env):
 
 def test_title_edits_refused_once_upload_starts(env, tmp_path):
     client, state, data = env
-    config.save(config.Config(require_approval=True), data)
     out = tmp_path / "1.mp4"
     out.write_bytes(b"video")
     a = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
     state.set_status(a.id, "rendered", output_path=str(out))
     state.set_title(a.id, "Generated")
-    state.start_upload(a.id)
+    state.set_approved(a.id)
+    assert state.start_upload(a.id)
 
     r = client.post(f"/clips/{a.id}/review", json={"action": "approve", "title": "Edited"})
     assert r.status_code == 409 and "uploading" in r.json["error"]
@@ -197,7 +194,6 @@ def test_title_edits_refused_once_upload_starts(env, tmp_path):
 
 def test_approve_button_saves_the_typed_title(env, tmp_path):
     client, state, data = env
-    config.save(config.Config(require_approval=True), data)
     a = state.enqueue("a", "mirage1v3clutchmp9.mp4", 1)
     state.set_status(a.id, "rendered", output_path=str(tmp_path / "1.mp4"))
     state.set_title(a.id, "Generated")

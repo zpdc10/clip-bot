@@ -20,6 +20,9 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SETTINGS_FILE = "settings.json"
+# Settings that no longer exist. Old settings.json files may still have them; ignore quietly.
+# require_approval: approval is now always required, there's no way to turn it off.
+RETIRED = {"require_approval"}
 
 
 @dataclass(frozen=True)
@@ -54,8 +57,6 @@ class Config:
 
     # --- YouTube upload (step 3) ---
     upload_enabled: bool = True
-    # When on, rendered clips wait for an "Approve" click in the web UI before uploading.
-    require_approval: bool = False
     # private / unlisted / public. Starts private so you can check the first few.
     privacy: str = "private"
     # Uploads per rolling 24 h. YouTube's API allows 100/day; 0 = no cap.
@@ -110,7 +111,6 @@ ENV_NAMES = {
     "x264_preset": "X264_PRESET",
     "render_ahead": "RENDER_AHEAD",
     "upload_enabled": "UPLOAD_ENABLED",
-    "require_approval": "REQUIRE_APPROVAL",
     "privacy": "PRIVACY",
     "daily_upload_limit": "DAILY_UPLOAD_LIMIT",
     "post_interval_minutes": "POST_INTERVAL_MINUTES",
@@ -187,6 +187,8 @@ def _apply(cfg: Config, values: dict, source: str) -> Config:
     types = {f.name: f.type for f in fields(Config)}
     changes = {}
     for key, value in values.items():
+        if key in RETIRED:
+            continue
         if key not in types:
             log.warning("ignoring unknown setting %r from %s", key, source)
             continue

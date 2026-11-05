@@ -60,8 +60,8 @@ def main() -> None:
     if state.get_meta("baseline_done") is None:
         if state.is_empty() and not cfg.backfill_existing:
             log.info("first start: recording clips already in %s as skipped (only new clips get posted)", cfg.watch_dir)
-            n = watcher.baseline("already in the folder when clip-bot was installed; Retry to post it")
-            log.info("skipped %d existing clip(s); Retry one in the web UI to post it anyway", n)
+            n = watcher.baseline("already in the folder when clip-bot was installed; Retry to review it")
+            log.info("skipped %d existing clip(s); Retry one in the web UI to review it", n)
         state.set_meta("baseline_done", "1")
 
     stop = threading.Event()
