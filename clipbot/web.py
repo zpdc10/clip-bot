@@ -10,7 +10,7 @@ import logging
 import os
 import secrets
 import time
-from dataclasses import asdict, fields, replace
+from dataclasses import asdict, fields
 from pathlib import Path
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, url_for
@@ -32,15 +32,14 @@ SETTINGS_LAYOUT = [
         ("crop_position", "Crop position", "0 = left edge, 0.5 = centre, 1 = right edge."),
         ("max_duration", "Max length (s)", "Longer clips are trimmed. YouTube allows up to 180. 0 = never trim."),
         ("trim", "When trimming keep", ""),
-        ("render_ahead", "Render ahead", "How many clips to keep rendered and waiting for upload. 0 = render everything immediately. With approval on, at least 10 are kept ready to swipe through."),
+        ("render_ahead", "Render ahead", "How many clips to keep rendered and waiting for upload. 0 = render everything immediately. At least 10 are kept ready to swipe through."),
         ("crf", "Quality (CRF)", "Lower is better quality and bigger files. 18-23 is sensible."),
         ("x264_preset", "Encode speed", "Slower presets make smaller files."),
         ("output_width", "Width", ""),
         ("output_height", "Height", ""),
     ]),
     ("YouTube", [
-        ("upload_enabled", "Upload automatically", "Off = render only."),
-        ("require_approval", "Wait for my approval", "Rendered clips wait for an Approve click before uploading."),
+        ("upload_enabled", "Upload approved clips", "Off = render only. Only clips you approve are ever uploaded."),
         ("privacy", "Privacy", ""),
         ("post_interval_minutes", "Post every (minutes)", "Minimum gap between uploads, e.g. 120 = at most one every 2 hours. 0 = no gap."),
         ("post_window", "Posting hours", "Only post in this local time window, e.g. 16:00-23:00. Leave empty for any time."),
@@ -105,7 +104,7 @@ def create_app(data: Path | None = None) -> Flask:
         return render_template_string(
             _page(INDEX), next_post=next_post, clips=clips, counts=counts, status=status, cfg=cfg,
             uploads_24h=uploads_24h, fmt_time=_fmt_time, Path=Path,
-            to_review=to_review if cfg.require_approval else 0,
+            to_review=to_review,
         )
 
     def _clip_action(clip_id: int, fn):
@@ -141,7 +140,9 @@ def create_app(data: Path | None = None) -> Flask:
         def fn(st, clip):
             if title and title != clip.title and not st.set_title(clip.id, title):
                 return f"#{clip.id} is already {st.get(clip.id).status}, so its title can't change any more."
-            st.set_approved(clip.id, True)
+            if not st.set_approved(clip.id, True):
+                return f"#{clip.id} is {st.get(clip.id).status}, so it can't be approved."
+            log.info("approved clip #%d on the Clips page", clip.id)
             return f"#{clip.id} approved for upload."
         return _clip_action(clip_id, fn)
 
@@ -213,16 +214,21 @@ def create_app(data: Path | None = None) -> Flask:
                 if clip.status != "rendered" or not st.set_title(clip.id, title):
                     now = st.get(clip.id).status
                     return jsonify(error=f"Too late, that clip is {now} now, so the title can't change."), 409
-                st.set_approved(clip.id, True)
+                if not st.set_approved(clip.id, True):
+                    return jsonify(error=f"Too late, that clip is {st.get(clip.id).status} now."), 409
+                log.info("approved clip #%d in the swipe review", clip.id)
             elif action == "skip":
                 if clip.status != "rendered":
                     return jsonify(error=f"That clip is {clip.status} now."), 409
                 st.set_status(clip.id, "skipped")
+                log.info("skipped clip #%d in the swipe review", clip.id)
             elif action == "undo":
                 if clip.status == "skipped":
                     st.set_status(clip.id, "rendered")
+                    log.info("undid skip of clip #%d", clip.id)
                 elif clip.status == "rendered":
                     st.set_approved(clip.id, False)
+                    log.info("undid approval of clip #%d", clip.id)
                 else:
                     return jsonify(error=f"Too late to undo, it's {clip.status}."), 409
             else:
@@ -230,11 +236,6 @@ def create_app(data: Path | None = None) -> Flask:
         finally:
             st.close()
         return jsonify(ok=True)
-
-    @app.post("/review/require-approval")
-    def turn_on_approval():
-        config.save(replace(config.load(data), require_approval=True), data)
-        return redirect(url_for("review"))
 
     @app.get("/clips/<int:clip_id>/video")
     def video(clip_id):
@@ -472,14 +473,14 @@ INDEX = """
 {% for s in ['queued','rendered','uploaded','failed','skipped'] %}
 <a href="{{ url_for('index', status=s) }}" class="{{ 'on' if status==s }}"><div class="card"><div class="n">{{ counts[s] + (counts['processing'] if s=='queued' else 0) + (counts['uploading'] if s=='uploaded' else 0) }}</div><div class="muted">{{ s }}</div></div></a>
 {% endfor %}</div>
-<p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}{% if next_post %} · next post after {{ next_post }}{% endif %} · new uploads are <b>{{ cfg.privacy }}</b>{% if cfg.require_approval %} · approval required{% endif %}{% if not cfg.upload_enabled %} · uploading is off{% endif %}
+<p class="muted">{{ uploads_24h }} of {{ cfg.daily_upload_limit or '∞' }} uploads used in the last 24 h{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}{% if next_post %} · next post after {{ next_post }}{% endif %} · new uploads are <b>{{ cfg.privacy }}</b> · only approved clips upload{% if not cfg.upload_enabled %} · uploading is off{% endif %}
 · <a href="{{ request.full_path }}">refresh</a></p>
 <div class="card cliplist" style="padding:4px 12px">
 <table><thead><tr><th>#</th><th>Clip</th><th>Status</th><th>Title</th></tr></thead><tbody>
 {% for c in clips %}<tr>
 <td class="muted c-id">{{ c.id }}</td>
 <td class="c-clip"><div class="clipname">{{ Path(c.rel_path).name }}</div><div class="muted"><span class="sm-only">#{{ c.id }} · </span>{{ fmt_time(c.created_at) }}</div></td>
-<td class="c-status"><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' and cfg.require_approval and not c.approved %} · needs approval{% endif %}</span>
+<td class="c-status"><span class="s s-{{ c.status }}">{{ c.status }}{% if c.status=='rendered' %}{{ ' · approved' if c.approved else ' · needs approval' }}{% endif %}</span>
 {% if c.status=='rendered' and c.retry_at %}<div class="muted">retry after {{ fmt_time(c.retry_at) }}</div>{% endif %}
 {% if c.video_id %}<div><a href="https://youtube.com/shorts/{{ c.video_id }}" target="_blank" rel="noopener">view</a>{% if c.privacy %} · <span class="{{ 'err' if c.privacy != 'public' }}">{{ c.privacy }}</span>{% endif %}</div>{% endif %}</td>
 <td class="c-title">
@@ -489,7 +490,7 @@ INDEX = """
 <input type="text" name="title" maxlength="100" value="{{ c.title or '' }}" placeholder="{{ 'generated after rendering' if not c.title }}"><button>Save</button></form>{% endif %}
 {% if c.error %}<div class="err">{{ c.error[:300] }}</div>{% endif %}
 <div class="actions">
-{% if c.status=='rendered' and cfg.require_approval and not c.approved %}<button class="primary" form="tf-{{ c.id }}" formaction="{{ url_for('approve', clip_id=c.id) }}">Approve</button>{% endif %}
+{% if c.status=='rendered' and not c.approved %}<button class="primary" form="tf-{{ c.id }}" formaction="{{ url_for('approve', clip_id=c.id) }}">Approve</button>{% endif %}
 {% if c.status in ['failed','skipped'] or (c.status=='rendered' and c.retry_at) %}<form method="post" action="{{ url_for('retry', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Retry</button></form>{% endif %}
 {% if c.status in ['rendered','failed','skipped'] %}<form method="post" action="{{ url_for('rerender', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Re-render</button></form>{% endif %}
 {% if c.status in ['queued','rendered','failed'] %}<form method="post" action="{{ url_for('skip', clip_id=c.id) }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button>Skip</button></form>{% endif %}
@@ -609,8 +610,6 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 <div class="bar"><a href="{{ url_for('index') }}">‹ Clips</a><span class="count" id="count">Loading…</span>
 <input type="range" class="vol" id="vol" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (only for reviewing here, uploads are unaffected)">
 <button id="mute" aria-label="Sound">🔇</button></div>
-{% if not cfg.require_approval %}<div class="notice"><span>Approval is off, so clips upload without waiting for a swipe.</span>
-<form method="post" action="{{ url_for('turn_on_approval') }}"><button>Turn on</button></form></div>{% endif %}
 <div class="feed" id="feed"><div class="slide end" id="end"><div class="big">⏳</div><p>Loading clips…</p></div></div>
 <div class="btns" id="btns" hidden><button class="no" id="bNo" aria-label="Skip">✕</button><button class="yes" id="bYes" aria-label="Approve">✓</button></div>
 <div class="modal" id="modal" hidden><div class="sheet" role="dialog" aria-labelledby="mh">

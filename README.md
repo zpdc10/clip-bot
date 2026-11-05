@@ -29,7 +29,7 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `watch_dir` | `WATCH_DIR` | `/clips` | Folder your clips are exported to |
 | `poll_interval` | `POLL_INTERVAL` | `15` | Seconds between scans |
 | `settle_seconds` | `SETTLE_SECONDS` | `30` | How long a file must be unchanged before it counts as fully copied |
-| `backfill_existing` | `BACKFILL_EXISTING` | `false` | Only read on the very first start. Off: clips already in the folder are listed as **skipped** and only new exports get posted. Click Retry on one to post it anyway |
+| `backfill_existing` | `BACKFILL_EXISTING` | `false` | Only read on the very first start. Off: clips already in the folder are listed as **skipped** and only new exports get posted. Click Retry on one to send it to review |
 | `extensions` | `CLIP_EXTENSIONS` | `.mp4,.mkv,.mov` | Which files count as clips |
 | `log_level` | `LOG_LEVEL` | `INFO` | `DEBUG` shows skipped files |
 | `crop_position` | `CROP_POSITION` | `0.5` | Where the 9:16 window sits: `0` left, `0.5` centre, `1` right |
@@ -39,8 +39,7 @@ Each queued clip is cropped to the largest 9:16 window, which is centred by defa
 | `crf` | `CRF` | `20` | x264 quality, lower is better |
 | `x264_preset` | `X264_PRESET` | `medium` | x264 speed/size trade-off |
 | `output_width` / `output_height` | `OUTPUT_WIDTH` / `OUTPUT_HEIGHT` | `1080` / `1920` | Output size |
-| `upload_enabled` | `UPLOAD_ENABLED` | `true` | Turn uploading off without stopping renders |
-| `require_approval` | `REQUIRE_APPROVAL` | `false` | Rendered clips wait for **Approve** in the web UI |
+| `upload_enabled` | `UPLOAD_ENABLED` | `true` | Turn uploading of approved clips off without stopping renders |
 | `privacy` | `PRIVACY` | `private` | `private`, `unlisted` or `public` |
 | `post_interval_minutes` | `POST_INTERVAL_MINUTES` | `120` | Minimum minutes between uploads, so posts are spread out. `0` = no gap |
 | `post_window` | `POST_WINDOW` | empty | Only post during this local time window, e.g. `16:00-23:00` (can wrap past midnight). Uses the container's `TZ` |
@@ -61,7 +60,9 @@ Env vars set the defaults. `DATA_DIR/settings.json` overrides them and is re-rea
 The UI runs on port `8765` (set with `WEB_PORT`). Open `http://<unraid-ip>:8765`. It has no login, so keep it on your LAN and don't port-forward it.
 
 - **Clips**: everything the bot has seen, with status filters. You can edit a title before it uploads, preview the rendered Short, and approve, retry, re-render, or skip a clip.
-- **Review** (built for phones): a full-screen feed of rendered clips waiting for approval. Swipe right to post (you get a box to check or edit the title first), swipe left to skip, swipe up for the next clip. Tap pauses, and Undo appears for a few seconds after each swipe. Turn on `require_approval` for this to matter; with it on, at least 10 clips are kept rendered and ready to review.
+- **Review** (built for phones): a full-screen feed of rendered clips waiting for approval. Swipe right to post (you get a box to check or edit the title first), swipe left to skip, swipe up for the next clip. Tap pauses, and Undo appears for a few seconds after each swipe. At least 10 clips are kept rendered and ready to review.
+
+**Nothing uploads without your approval.** There is no setting to turn this off (the old `require_approval` setting is ignored). A clip can only upload after you swipe it right (and press Okay on the title) or press Approve on the Clips page, and not until 2 minutes after that, so Undo always wins. Skipping or re-rendering a clip withdraws its approval, so a skipped clip you Retry goes back to review. Approvals, skips and undos are written to the log, and each upload's log line says when it was approved. To check past uploads, run `docker exec clip-bot clipbot audit`: it lists every uploaded clip and whether it was approved.
 - **Settings**: every setting in the table below. Changes are saved to `settings.json` and apply on the next scan. Once you save from the UI, those values win over the container's env vars.
 - **YouTube**: upload your OAuth client JSON and sign in, with step-by-step instructions.
 

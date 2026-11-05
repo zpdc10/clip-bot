@@ -25,9 +25,14 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 # Lifecycle: queued -> processing -> rendered -> uploading -> uploaded, or failed at any point.
 # "skipped" is set from the web UI for clips that should never be uploaded.
+# Nothing uploads without approval: only a clip you approved (swipe right or the Approve button)
+# can be claimed for upload, and approval is cleared whenever the clip is skipped or re-rendered.
 STATUSES = ("queued", "processing", "rendered", "uploading", "uploaded", "failed", "skipped")
 # Once a clip is in one of these, its title has gone (or is going) to YouTube and can't change here.
 TITLE_LOCKED = ("uploading", "uploaded")
+# Moving a clip into one of these withdraws its approval: a skipped clip that's retried, or a
+# clip rendered again, has to be reviewed again before it can upload.
+CLEARS_APPROVAL = ("queued", "processing", "skipped")
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,8 @@ class Clip:
     retry_at: float | None = None
     # Privacy YouTube reported for the upload (None for uploads made before this was recorded).
     privacy: str | None = None
+    # When it was approved (None if never, or if approved before this was recorded).
+    approved_at: float | None = None
 
 
 class State:
@@ -64,7 +71,8 @@ class State:
         cols = {r["name"] for r in self._db.execute("PRAGMA table_info(clips)")}
         for col, typ in (("output_path", "TEXT"), ("title", "TEXT"), ("video_id", "TEXT"), ("uploaded_at", "REAL"),
                          ("approved", "INTEGER NOT NULL DEFAULT 0"),
-                         ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("retry_at", "REAL"), ("privacy", "TEXT")):
+                         ("attempts", "INTEGER NOT NULL DEFAULT 0"), ("retry_at", "REAL"), ("privacy", "TEXT"),
+                         ("approved_at", "REAL")):
             if col not in cols:
                 self._db.execute(f"ALTER TABLE clips ADD COLUMN {col} {typ}")
 
@@ -101,10 +109,13 @@ class State:
     ) -> None:
         if status not in STATUSES:
             raise ValueError(f"unknown status {status!r}")
+        clear = status in CLEARS_APPROVAL
         self._db.execute(
             "UPDATE clips SET status = ?, error = ?, output_path = COALESCE(?, output_path),"
+            " approved = CASE WHEN ? THEN 0 ELSE approved END,"
+            " approved_at = CASE WHEN ? THEN NULL ELSE approved_at END,"
             " updated_at = ? WHERE id = ?",
-            (status, error, output_path, time.time(), clip_id),
+            (status, error, output_path, clear, clear, time.time(), clip_id),
         )
         self._db.commit()
 
@@ -119,10 +130,12 @@ class State:
         return cur.rowcount > 0
 
     def start_upload(self, clip_id: int) -> Clip | None:
-        """Claim a rendered clip for upload and return it as it is now (with the latest title).
-        Returns None if it's no longer rendered, e.g. skipped in the web UI a moment ago."""
+        """Claim a rendered, approved clip for upload and return it as it is now (with the latest
+        title). Returns None if it's no longer rendered and approved, e.g. skipped or un-done in the
+        web UI a moment ago. This is the only way into 'uploading', so it's the approval gate."""
         cur = self._db.execute(
-            "UPDATE clips SET status = 'uploading', updated_at = ? WHERE id = ? AND status = 'rendered'",
+            "UPDATE clips SET status = 'uploading', updated_at = ?"
+            " WHERE id = ? AND status = 'rendered' AND approved = 1",
             (time.time(), clip_id),
         )
         self._db.commit()
@@ -159,10 +172,15 @@ class State:
                          (time.time(), clip_id))
         self._db.commit()
 
-    def set_approved(self, clip_id: int, approved: bool = True) -> None:
-        self._db.execute("UPDATE clips SET approved = ?, updated_at = ? WHERE id = ?",
-                         (int(approved), time.time(), clip_id))
+    def set_approved(self, clip_id: int, approved: bool = True) -> bool:
+        """Approve (or un-approve) a rendered clip. Returns False if it isn't rendered any more."""
+        now = time.time()
+        cur = self._db.execute(
+            "UPDATE clips SET approved = ?, approved_at = ?, updated_at = ? WHERE id = ? AND status = 'rendered'",
+            (int(approved), now if approved else None, now, clip_id),
+        )
         self._db.commit()
+        return cur.rowcount > 0
 
     def recent(self, limit: int = 100, status: str | None = None) -> list[Clip]:
         if status:
@@ -224,4 +242,5 @@ def _to_clip(row: sqlite3.Row) -> Clip:
         attempts=row["attempts"],
         retry_at=row["retry_at"],
         privacy=row["privacy"],
+        approved_at=row["approved_at"],
     )

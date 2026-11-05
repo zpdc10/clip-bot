@@ -17,6 +17,9 @@ DAY = 24 * 3600
 # Wait before retry 1, 2, 3 ... after an upload error that might be temporary.
 BACKOFF = [5 * 60, 30 * 60, 2 * 3600, 6 * 3600]
 QUOTA_WAIT = 6 * 3600
+# A clip waits this long after approval before it can upload, so the Undo after a swipe
+# (shown for 5 s) and the Clips page always get a chance to take it back.
+APPROVAL_GRACE = 2 * 60
 
 
 def _error_reason(exc: Exception) -> str:
@@ -59,9 +62,11 @@ def process_rendered(
     if not cfg.upload_enabled:
         return 0
     now = clock()
+    # Only clips you approved, and not in the first couple of minutes after approving.
     pending = [
         c for c in rendered
-        if (c.approved or not cfg.require_approval) and (not c.retry_at or c.retry_at <= now)
+        if c.approved and (c.approved_at is None or now - c.approved_at >= APPROVAL_GRACE)
+        and (not c.retry_at or c.retry_at <= now)
     ]
     if not pending:
         return 0
@@ -116,7 +121,9 @@ def process_rendered(
         return 1
     video_id, privacy = result if isinstance(result, tuple) else (result, cfg.privacy)
     state.mark_uploaded(clip.id, video_id, clock(), privacy)
-    log.info("uploaded clip #%d as https://youtube.com/shorts/%s (%s): %s", clip.id, video_id, privacy, full_title)
+    log.info("uploaded clip #%d as https://youtube.com/shorts/%s (%s), approved %s: %s", clip.id, video_id, privacy,
+             time.strftime("%Y-%m-%d %H:%M", time.localtime(clip.approved_at)) if clip.approved_at else "before times were kept",
+             full_title)
     if not cfg.keep_rendered and clip.output_path:
         Path(clip.output_path).unlink(missing_ok=True)
     return 1

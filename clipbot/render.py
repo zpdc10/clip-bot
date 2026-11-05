@@ -103,7 +103,7 @@ def render(src: Path, dst: Path, cfg: Config) -> Path:
     return dst
 
 
-# With approval on, keep at least this many clips rendered and waiting for review.
+# Keep at least this many clips rendered and waiting for review.
 REVIEW_AHEAD = 10
 
 
@@ -122,11 +122,10 @@ def process_queued(
         # ready ahead of the uploader. Matters for big backlogs and the daily upload cap.
         rendered = state.by_status("rendered")
         ahead = cfg.render_ahead
-        if cfg.require_approval:
-            # Approved clips are already rendered, so what matters is keeping enough clips ready to
-            # review (swipe through) while you wait on the uploader.
-            rendered = [c for c in rendered if not c.approved]
-            ahead = max(ahead, REVIEW_AHEAD)
+        # Approved clips are already rendered, so what matters is keeping enough clips ready to
+        # review (swipe through) while you wait on the uploader.
+        rendered = [c for c in rendered if not c.approved]
+        ahead = max(ahead, REVIEW_AHEAD)
         limit = min(limit, max(0, ahead - len(rendered)))
     for clip in state.by_status("queued")[:limit]:
         if stopping():
