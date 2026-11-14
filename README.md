@@ -57,7 +57,11 @@ Env vars set the defaults. `DATA_DIR/settings.json` overrides them and is re-rea
 
 ## Web UI
 
-The UI runs on port `8765` (set with `WEB_PORT`). Open `http://<unraid-ip>:8765`. It has no login, so keep it on your LAN and don't port-forward it.
+The UI runs on port `8765` (set with `WEB_PORT`). Open `http://<unraid-ip>:8765`.
+
+**Login.** The UI is password protected and stays locked until you set one. In Unraid's terminal run `docker exec -it clip-bot clipbot set-password` (at least 10 characters; run it again to change it, which also logs out every browser). Only a salted scrypt hash is stored, in `DATA_DIR/web_password`. A login lasts 30 days. After 5 wrong passwords from one address in 15 minutes, that address has to wait. `/healthz` stays open for the Docker health check.
+
+**Reaching it from outside your home.** Don't port-forward it. Put it behind a Cloudflare tunnel with Cloudflare Access in front: add a public hostname on your tunnel pointing at `http://<unraid-ip>:8765`, then create an Access self-hosted application for that hostname with an Allow policy for your own email (one-time PIN). Access stops strangers before they reach the bot, and the bot's own password is the second lock. The login rate limit uses Cloudflare's `CF-Connecting-IP` header to tell visitors apart.
 
 - **Clips**: everything the bot has seen, with status filters. You can edit a title before it uploads, preview the rendered Short, and approve, retry, re-render, or skip a clip.
 - **Review** (built for phones): a full-screen feed of rendered clips waiting for approval. Swipe right to post (you get a box to check or edit the title first), swipe left to skip, swipe up for the next clip. Tap pauses, and Undo appears for a few seconds after each swipe. At least 10 clips are kept rendered and ready to review.

@@ -13,9 +13,11 @@ import time
 from dataclasses import asdict, fields
 from pathlib import Path
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, url_for
+from datetime import timedelta
 
-from . import config, logbuffer, titles, youtube
+from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, session, url_for
+
+from . import auth, config, logbuffer, titles, youtube
 from .state import STATUSES, State
 
 log = logging.getLogger(__name__)
@@ -73,15 +75,82 @@ FIELD_TYPES = {f.name: f.type for f in fields(config.Config)}
 def create_app(data: Path | None = None) -> Flask:
     data = data or config.data_dir()
     app = Flask(__name__)
-    app.secret_key = secrets.token_hex(16)
+    app.secret_key = auth.secret_key(data)
     app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024  # only small JSON uploads
+    app.config.update(
+        SESSION_COOKIE_NAME="clipbot_session",
+        SESSION_COOKIE_HTTPONLY=True,
+        # Lax: the browser won't send the cookie on POSTs from other sites, which blocks CSRF.
+        SESSION_COOKIE_SAMESITE="Lax",
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    )
+    limiter = auth.Limiter()
+    open_endpoints = {"login", "healthz"}
+
+    def client_id() -> str:
+        # Behind a Cloudflare tunnel every request comes from cloudflared, so use the visitor's IP.
+        return request.headers.get("CF-Connecting-IP") or request.remote_addr or "?"
+
+    def logged_in() -> bool:
+        h = auth.password_hash(data)
+        # The stored hash is part of the session, so setting a new password logs everyone out.
+        return bool(h) and secrets.compare_digest(session.get("pw", ""), auth.fingerprint(h))
+
+    @app.before_request
+    def require_login():
+        if request.endpoint in open_endpoints or logged_in():
+            return None
+        if request.method == "GET" and request.endpoint not in ("video", "review_queue"):
+            return redirect(url_for("login", next=request.full_path.rstrip("?")))
+        abort(401)
+
+    @app.after_request
+    def security_headers(resp):
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "same-origin")
+        if request.endpoint != "video":
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        has_password = bool(auth.password_hash(data))
+        nxt = request.values.get("next", "")
+        if not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt:
+            nxt = url_for("index")
+        error = ""
+        if request.method == "POST" and has_password:
+            who = client_id()
+            wait = limiter.blocked_for(who)
+            if wait:
+                error = f"Too many wrong passwords. Try again in {wait // 60 + 1} min."
+            elif auth.check(data, request.form.get("password", "")):
+                limiter.reset(who)
+                session.clear()
+                session.permanent = True
+                session["pw"] = auth.fingerprint(auth.password_hash(data))
+                return redirect(nxt)
+            else:
+                limiter.fail(who)
+                log.warning("wrong web UI password from %s", who)
+                time.sleep(1)
+                error = "Wrong password."
+        return render_template_string(_page(LOGIN), has_password=has_password, error=error, nxt=nxt), (
+            401 if error else 200)
+
+    @app.post("/logout")
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
 
     def db() -> State:
         return State(data / "clipbot.db")
 
     @app.context_processor
     def common():
-        return {"signed_in": youtube.is_signed_in(data), "nav": request.endpoint}
+        return {"signed_in": youtube.is_signed_in(data), "nav": request.endpoint,
+                "authed": request.endpoint not in open_endpoints}
 
     @app.get("/")
     def index():
@@ -419,7 +488,8 @@ button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);
 .row{display:grid;grid-template-columns:220px 1fr;gap:6px 16px;align-items:start;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row label{font-weight:500;padding-top:6px}
 .inline{display:flex;gap:6px}.inline input{flex:1}.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-form{margin:0}video{max-height:420px;border-radius:8px;background:#000}.preview{margin-top:8px}
+form{margin:0}.linkbtn{border:0;background:none;padding:0;color:var(--muted);font:inherit;min-height:0}.logout{display:contents}
+.loginbox{max-width:380px;margin:40px auto}.loginbox input{margin:6px 0 12px}.loginbox button{width:100%}video{max-height:420px;border-radius:8px;background:#000}.preview{margin-top:8px}
 details summary{cursor:pointer;color:var(--accent);font-size:13px}
 code{background:var(--bg);padding:1px 5px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
 .sm-only{display:none}.clipname{word-break:break-word}
@@ -450,17 +520,32 @@ video{width:100%;max-height:70vh}
 .inline.stack-sm{flex-direction:column}
 }
 </style></head><body>
-<header><b>clip-bot <span class="pill sm-only {{ 'ok' if signed_in else 'no' }}">{{ 'YouTube ✓' if signed_in else 'YouTube not connected' }}</span></b>
+{% if authed %}<header><b>clip-bot <span class="pill sm-only {{ 'ok' if signed_in else 'no' }}">{{ 'YouTube ✓' if signed_in else 'YouTube not connected' }}</span></b>
 <nav><a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
 <a href="{{ url_for('review') }}">Review</a>
 <a href="{{ url_for('settings') }}" class="{{ 'on' if nav=='settings' }}">Settings</a>
 <a href="{{ url_for('youtube_page') }}" class="{{ 'on' if nav=='youtube_page' }}">YouTube</a>
-<a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a></nav>
-<span class="pill hide-sm">{{ 'YouTube connected' if signed_in else 'YouTube not connected' }}</span></header>
+<a href="{{ url_for('logs') }}" class="{{ 'on' if nav=='logs' }}">Logs</a>
+<form method="post" action="{{ url_for('logout') }}" class="logout"><button class="linkbtn">Log out</button></form></nav>
+<span class="pill hide-sm">{{ 'YouTube connected' if signed_in else 'YouTube not connected' }}</span></header>{% endif %}
 <main>
 {% with msgs = get_flashed_messages() %}{% for m in msgs %}<div class="card flash">{{ m }}</div>{% endfor %}{% endwith %}
 __BODY__
 </main></body></html>"""
+
+LOGIN = """
+<div class="card loginbox"><h2 style="margin:0 0 10px">clip-bot</h2>
+{% if has_password %}<form method="post">
+<input type="hidden" name="next" value="{{ nxt }}">
+<label for="password">Password</label>
+<input type="password" name="password" id="password" autocomplete="current-password" autofocus required>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<button class="primary">Log in</button></form>
+{% else %}<p>No password is set yet, so the web UI is locked.</p>
+<p>In Unraid's terminal, run:</p><p><code>docker exec -it clip-bot clipbot set-password</code></p>
+<p class="muted">Then reload this page.</p>{% endif %}
+</div>
+"""
 
 INDEX = """
 {% if not signed_in %}<div class="card flash">YouTube isn't connected yet, so clips will render but not upload.
