@@ -158,6 +158,10 @@ class State:
         row = self._db.execute("SELECT COUNT(*) FROM clips WHERE uploaded_at >= ?", (since,)).fetchone()
         return row[0]
 
+    def upload_times_since(self, since: float) -> list[float]:
+        rows = self._db.execute("SELECT uploaded_at FROM clips WHERE uploaded_at >= ?", (since,)).fetchall()
+        return [r[0] for r in rows]
+
     def schedule_retry(self, clip_id: int, retry_at: float, error: str, count_attempt: bool = True) -> None:
         """Keep a clip 'rendered' but don't try it again before retry_at."""
         self._db.execute(

@@ -272,3 +272,23 @@ def test_approve_button_saves_the_typed_title(env, tmp_path):
     client.post(f"/clips/{a.id}/approve", data={"title": "Typed but not saved"})
     clip = state.get(a.id)
     assert clip.approved and clip.title == "Typed but not saved"
+
+
+def test_queue_page_shows_next_post_and_removes(env):
+    client, state, data = env
+    assert b"No approved clips waiting" in client.get("/queue").data
+    c = state.enqueue("fp", "dust2acejump.mp4", 1)
+    state.set_status(c.id, "rendered", output_path=str(data / "x.mp4"))
+    state.set_title(c.id, "Dust2 Ace Jump")
+    state.set_approved(c.id)
+    config.save(config.Config(title_template="{title} #shorts"), data)
+    r = client.get("/queue")
+    assert r.status_code == 200
+    assert b"Next post" in r.data and b"Dust2 Ace Jump #shorts" in r.data and b"dust2acejump.mp4" in r.data
+    assert b"nothing will post until you connect it" in r.data and b'class="countdown"' not in r.data
+    (data / youtube.TOKEN_FILE).write_text("{}")
+    r = client.get("/queue")
+    assert b'class="countdown"' in r.data and b"nothing will post until you connect it" not in r.data
+    r = client.post(f"/clips/{c.id}/unapprove", data={"next": "/queue"})
+    assert r.status_code == 302 and not state.get(c.id).approved
+    assert b"No approved clips waiting" in client.get("/queue").data

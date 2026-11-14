@@ -17,7 +17,7 @@ from datetime import timedelta
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template_string, request, send_file, session, url_for
 
-from . import auth, config, logbuffer, titles, youtube
+from . import auth, config, logbuffer, titles, uploader, youtube
 from .state import STATUSES, State
 
 log = logging.getLogger(__name__)
@@ -176,6 +176,31 @@ def create_app(data: Path | None = None) -> Flask:
             to_review=to_review,
         )
 
+    @app.get("/queue")
+    def queue():
+        st = db()
+        cfg = config.load(data)
+        now = time.time()
+        try:
+            uploading = st.by_status("uploading")
+            planned = uploader.upcoming(st, cfg, now)
+            to_review = sum(1 for c in st.by_status("rendered") if not c.approved)
+        finally:
+            st.close()
+        paused = ""
+        if not cfg.upload_enabled:
+            paused = "Uploading is turned off in Settings, so nothing will post until you turn it back on."
+        elif not youtube.is_signed_in(data):
+            paused = "YouTube isn't connected, so nothing will post until you connect it."
+
+        def full_title(c):
+            return cfg.title_template.format(title=c.title)[:100] if c.title else ""
+
+        return render_template_string(
+            _page(QUEUE), planned=planned, uploading=uploading, paused=paused, cfg=cfg, now=now,
+            to_review=to_review, full_title=full_title, fmt_time=_fmt_time, Path=Path,
+        )
+
     def _clip_action(clip_id: int, fn):
         st = db()
         try:
@@ -213,6 +238,15 @@ def create_app(data: Path | None = None) -> Flask:
                 return f"#{clip.id} is {st.get(clip.id).status}, so it can't be approved."
             log.info("approved clip #%d on the Clips page", clip.id)
             return f"#{clip.id} approved for upload."
+        return _clip_action(clip_id, fn)
+
+    @app.post("/clips/<int:clip_id>/unapprove")
+    def unapprove(clip_id):
+        def fn(st, clip):
+            if not st.set_approved(clip.id, False):
+                return f"#{clip.id} is {st.get(clip.id).status}, so it can't be taken out of the queue."
+            log.info("removed clip #%d from the upload queue", clip.id)
+            return f"#{clip.id} taken out of the upload queue. It's back in Review."
         return _clip_action(clip_id, fn)
 
     @app.post("/clips/<int:clip_id>/retry")
@@ -493,12 +527,13 @@ form{margin:0}.linkbtn{border:0;background:none;padding:0;color:var(--muted);fon
 details summary{cursor:pointer;color:var(--accent);font-size:13px}
 code{background:var(--bg);padding:1px 5px;border-radius:5px;border:1px solid var(--line);word-break:break-all}
 .sm-only{display:none}.clipname{word-break:break-word}
+.nextup .countdown{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}.nexttitle{font-size:18px;font-weight:600;margin:6px 0 2px}.c-when{white-space:nowrap}
 .savebar{position:sticky;bottom:0;padding:12px 0;background:linear-gradient(transparent,var(--bg) 35%)}
 @media (max-width:700px){
 .row{grid-template-columns:1fr}.hide-sm{display:none}.sm-only{display:inline}
 header{position:sticky;top:0;z-index:5;gap:4px 2px;padding:8px 12px}
 header b{width:100%;display:flex;align-items:center;justify-content:space-between;margin:0 0 2px}
-header nav{display:flex;width:100%;overflow-x:auto}header nav a{flex:1;text-align:center;padding:8px 6px;border-radius:7px}
+header nav{display:flex;width:100%;overflow-x:auto}header nav a,header nav .linkbtn{flex:1;text-align:center;white-space:nowrap;padding:8px 6px;border-radius:7px}
 header nav a.on{background:var(--bg)}
 .pill{margin:0;font-size:12px;font-weight:400;padding:2px 9px}.pill.ok{color:var(--ok)}.pill.no{color:var(--warn)}
 main{padding:12px 12px 24px}.card{padding:12px 14px;margin-bottom:12px}
@@ -514,7 +549,7 @@ input[type=checkbox]{width:22px;height:22px}
 .cliplist thead,.cliplist .c-id{display:none}
 .savebar button{width:100%}
 .cliplist tr{display:grid;grid-template-columns:1fr auto;gap:6px 10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
-.cliplist td{border:0;padding:0}.cliplist .c-status{text-align:right}.cliplist .c-title,.cliplist .c-empty{grid-column:1/-1}
+.cliplist td{border:0;padding:0}.cliplist .c-status,.cliplist .c-when{text-align:right}.cliplist .c-title,.cliplist .c-empty{grid-column:1/-1}
 .actions button{flex:1}
 video{width:100%;max-height:70vh}
 .inline.stack-sm{flex-direction:column}
@@ -522,6 +557,7 @@ video{width:100%;max-height:70vh}
 </style></head><body>
 {% if authed %}<header><b>clip-bot <span class="pill sm-only {{ 'ok' if signed_in else 'no' }}">{{ 'YouTube ✓' if signed_in else 'YouTube not connected' }}</span></b>
 <nav><a href="{{ url_for('index') }}" class="{{ 'on' if nav=='index' }}">Clips</a>
+<a href="{{ url_for('queue') }}" class="{{ 'on' if nav=='queue' }}">Queue</a>
 <a href="{{ url_for('review') }}">Review</a>
 <a href="{{ url_for('settings') }}" class="{{ 'on' if nav=='settings' }}">Settings</a>
 <a href="{{ url_for('youtube_page') }}" class="{{ 'on' if nav=='youtube_page' }}">YouTube</a>
@@ -591,6 +627,53 @@ function togglePreview(btn, id){
   if(box.hidden){ if(!v.src) v.src=v.dataset.src; box.hidden=false; btn.textContent='■ Hide preview'; }
   else { v.pause(); box.hidden=true; btn.textContent='▶ Preview'; }
 }
+</script>
+"""
+
+QUEUE = """
+{% if paused %}<div class="card flash">{{ paused }}</div>{% endif %}
+{% for c in uploading %}<div class="card nextup"><div class="muted">Uploading now</div>
+<div class="nexttitle">{{ full_title(c) or c.title }}</div><div class="muted clipname">{{ Path(c.rel_path).name }}</div></div>{% endfor %}
+{% if planned %}{% set c, t = planned[0] %}
+<div class="card nextup"><div class="muted">Next post{% if paused %} (once uploading can resume){% endif %}</div>
+{% if not paused %}<div class="countdown" data-ts="{{ t|int }}">{{ 'any moment now' if t <= now else '' }}</div>{% endif %}
+<div class="muted"><span class="when" data-ts="{{ t|int }}">{{ fmt_time(t) }}</span></div>
+<div class="nexttitle">{{ full_title(c) or 'Title is generated just before upload' }}</div>
+<div class="muted clipname">#{{ c.id }} · {{ Path(c.rel_path).name }}</div>
+{% if c.output_path %}<div class="actions"><button type="button" onclick="togglePreview(this, {{ c.id }})">▶ Preview</button></div>
+<div class="preview" id="preview-{{ c.id }}" hidden><video data-src="{{ url_for('video', clip_id=c.id) }}" controls preload="none" playsinline></video></div>{% endif %}
+</div>{% endif %}
+<p class="muted">{{ planned|length }} approved clip{{ 's' if planned|length != 1 }} waiting to post{% if cfg.post_interval_minutes %} · one every {{ cfg.post_interval_minutes }} min{% endif %}{% if cfg.daily_upload_limit %} · max {{ cfg.daily_upload_limit }} per 24 h{% endif %}{% if cfg.post_window %} · posting {{ cfg.post_window }}{% endif %}.
+Times are estimates: they shift as you approve or remove clips, and an upload error delays the rest.{% if to_review %} <a href="{{ url_for('review') }}">{{ to_review }} more to review</a>.{% endif %}
+· <a href="{{ url_for('queue') }}">refresh</a></p>
+<div class="card cliplist" style="padding:4px 12px">
+<table><thead><tr><th>#</th><th>Clip</th><th>Posts</th><th>Title</th></tr></thead><tbody>
+{% for c, t in planned %}<tr>
+<td class="muted c-id">{{ loop.index }}</td>
+<td class="c-clip"><div class="clipname">{{ Path(c.rel_path).name }}</div><div class="muted">#{{ c.id }}</div></td>
+<td class="c-when"><span class="when" data-ts="{{ t|int }}">{{ fmt_time(t) }}</span><div class="muted rel" data-ts="{{ t|int }}"></div></td>
+<td class="c-title">{{ full_title(c) or 'generated before upload' }}
+<form method="post" action="{{ url_for('unapprove', clip_id=c.id) }}" class="actions"><input type="hidden" name="next" value="{{ url_for('queue') }}"><button>Remove from queue</button></form></td>
+</tr>
+{% else %}<tr><td colspan="4" class="muted c-empty" style="padding:20px 6px">No approved clips waiting. <a href="{{ url_for('review') }}">Review clips</a> to add some.</td></tr>{% endfor %}
+</tbody></table></div>
+<script>
+function togglePreview(btn, id){
+  var box=document.getElementById('preview-'+id), v=box.querySelector('video');
+  if(box.hidden){ if(!v.src) v.src=v.dataset.src; box.hidden=false; btn.textContent='■ Hide preview'; }
+  else { v.pause(); box.hidden=true; btn.textContent='▶ Preview'; }
+}
+(function(){
+  var fmt={weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'};
+  document.querySelectorAll('.when').forEach(function(el){ el.textContent=new Date(el.dataset.ts*1000).toLocaleString([],fmt); });
+  function span(s){ var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=Math.floor(s%60);
+    return (d?d+'d ':'')+(d||h?h+'h ':'')+m+'m '+(d?'':x+'s'); }
+  function tick(){ var now=Date.now()/1000;
+    document.querySelectorAll('.countdown').forEach(function(el){ var s=el.dataset.ts-now; el.textContent=s>0?span(s):'any moment now'; });
+    document.querySelectorAll('.rel').forEach(function(el){ var s=el.dataset.ts-now; el.textContent=s>0?'in '+span(s).replace(/ \\d+s$/,''):'any moment now'; });
+  }
+  tick(); setInterval(tick,1000);
+})();
 </script>
 """
 
