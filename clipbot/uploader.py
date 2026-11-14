@@ -9,7 +9,7 @@ from typing import Callable
 
 from . import titles, youtube
 from .config import Config, in_window, parse_window
-from .state import State
+from .state import Clip, State
 
 log = logging.getLogger(__name__)
 
@@ -127,3 +127,60 @@ def process_rendered(
     if not cfg.keep_rendered and clip.output_path:
         Path(clip.output_path).unlink(missing_ok=True)
     return 1
+
+
+def _next_in_window(window: tuple[int, int] | None, t: float) -> float:
+    """The earliest time at or after t that falls inside the posting window (local time)."""
+    if window is None:
+        return t
+    lt = time.localtime(t)
+    minute = lt.tm_hour * 60 + lt.tm_min
+    if in_window(window, minute):
+        return t
+    wait = (window[0] - minute) % 1440
+    return t - lt.tm_sec - (t % 1) + wait * 60
+
+
+def upcoming(state: State, cfg: Config, now: float | None = None, limit: int = 200) -> list[tuple[Clip, float]]:
+    """Approved clips in the order the uploader will post them, each with its estimated post time.
+
+    Follows the same rules as process_rendered: lowest id first among clips past their approval
+    grace and retry wait, at most one per post interval, within the daily cap and posting window.
+    Times are estimates: the worker checks every poll interval, and an upload error changes things.
+    """
+    now = time.time() if now is None else now
+    try:
+        window = parse_window(cfg.post_window)
+    except ValueError:
+        window = None
+    waiting = []
+    for c in state.by_status("rendered"):
+        if not c.approved:
+            continue
+        ready = (c.approved_at + APPROVAL_GRACE) if c.approved_at else 0.0
+        if c.retry_at:
+            ready = max(ready, c.retry_at)
+        waiting.append((c, ready))
+    recent = sorted(t for t in state.upload_times_since(now - DAY))
+    last = state.last_upload_at()
+    out: list[tuple[Clip, float]] = []
+    while waiting and len(out) < limit:
+        t = now
+        if cfg.post_interval_minutes > 0 and last:
+            t = max(t, last + cfg.post_interval_minutes * 60)
+        t = max(t, min(r for _, r in waiting))
+        for _ in range(10):  # settle: each rule can only push t later
+            before = t
+            if cfg.daily_upload_limit > 0:
+                in_day = [u for u in recent if u > t - DAY]
+                if len(in_day) >= cfg.daily_upload_limit:
+                    t = max(t, in_day[-cfg.daily_upload_limit] + DAY)
+            t = _next_in_window(window, t)
+            if t == before:
+                break
+        i = next(i for i, (_, r) in enumerate(waiting) if r <= t)
+        clip, _ = waiting.pop(i)
+        out.append((clip, t))
+        recent.append(t)
+        last = t
+    return out

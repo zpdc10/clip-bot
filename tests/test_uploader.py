@@ -305,3 +305,44 @@ def test_audit_lists_unapproved_uploads(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "2 uploaded: 1 approved, 1 NOT approved" in out
     assert f"NOT APPROVED #{b}" in out and "vidB" in out
+
+
+def test_upcoming_follows_interval_daily_cap_and_window(tmp_path):
+    from clipbot.uploader import upcoming
+    state, ids = setup(tmp_path, n=4)
+    now = 1_000_000.0
+    # Nothing uploaded yet: the first goes now, then one per interval, in id order.
+    plan = upcoming(state, Config(post_interval_minutes=60, daily_upload_limit=0), now)
+    assert [c.id for c, _ in plan] == ids
+    assert [t for _, t in plan] == [now, now + 3600, now + 7200, now + 10800]
+    # Daily cap of 2: the third waits until the first is 24 h old.
+    plan = upcoming(state, Config(post_interval_minutes=60, daily_upload_limit=2), now)
+    assert [t for _, t in plan][:3] == [now, now + 3600, now + DAY]
+    # A recent upload pushes the first one back.
+    state.mark_uploaded(state.enqueue("x", "x.mp4", 1).id, "vid", now - 600)
+    plan = upcoming(state, Config(post_interval_minutes=60, daily_upload_limit=0), now)
+    assert plan[0][1] == now + 3000
+    # Unapproved and retrying clips: the retrying one goes once its wait is over.
+    state.set_approved(ids[0], False)
+    state.schedule_retry(ids[1], now + 5 * 3600, "err")
+    plan = upcoming(state, Config(post_interval_minutes=60, daily_upload_limit=0), now)
+    assert [c.id for c, _ in plan] == [ids[2], ids[3], ids[1]]
+    assert plan[2][1] == now + 5 * 3600
+
+
+def test_upcoming_respects_posting_window(tmp_path, monkeypatch):
+    import time as _time
+    from clipbot.uploader import upcoming
+    monkeypatch.setenv("TZ", "UTC")
+    _time.tzset()
+    try:
+        state, ids = setup(tmp_path, n=2)
+        midnight = 1_700_006_400.0  # a UTC midnight
+        assert midnight % 86400 == 0
+        plan = upcoming(state, Config(post_interval_minutes=60, post_window="16:00-18:00"), midnight + 3600)
+        assert [t for _, t in plan] == [midnight + 16 * 3600, midnight + 17 * 3600]
+        plan = upcoming(state, Config(post_interval_minutes=180, post_window="16:00-18:00"), midnight + 3600)
+        assert plan[1][1] == midnight + DAY + 16 * 3600
+    finally:
+        monkeypatch.delenv("TZ")
+        _time.tzset()
