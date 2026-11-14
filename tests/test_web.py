@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from clipbot import config, youtube
+from clipbot import auth, config, youtube
 from clipbot.state import State
 from clipbot.web import create_app
 
@@ -12,10 +12,80 @@ from clipbot.web import create_app
 def env(tmp_path, monkeypatch):
     for v in config.ENV_NAMES.values():
         monkeypatch.delenv(v, raising=False)
+    auth.set_password(tmp_path, "correct horse battery")
     app = create_app(tmp_path)
     app.testing = True
     state = State(tmp_path / "clipbot.db")
-    return app.test_client(), state, tmp_path
+    client = app.test_client()
+    assert client.post("/login", data={"password": "correct horse battery"}).status_code == 302
+    return client, state, tmp_path
+
+
+@pytest.fixture
+def anon(tmp_path, monkeypatch):
+    for v in config.ENV_NAMES.values():
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr("clipbot.web.time.sleep", lambda s: None)
+    app = create_app(tmp_path)
+    app.testing = True
+    return app.test_client(), tmp_path
+
+
+def test_locked_until_password_set(anon):
+    client, data = anon
+    r = client.get("/settings")
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
+    assert b"clipbot set-password" in client.get("/login").data
+    # No password means nothing logs in.
+    client.post("/login", data={"password": ""})
+    assert client.get("/").status_code == 302
+    assert client.post("/settings", data={}).status_code == 401
+    assert client.get("/healthz").status_code == 200
+
+
+def test_login_flow(anon):
+    client, data = anon
+    auth.set_password(data, "correct horse battery")
+    assert client.get("/clips/1/video").status_code == 401
+    assert client.get("/review/queue").status_code == 401
+    r = client.post("/login", data={"password": "nope"})
+    assert r.status_code == 401 and b"Wrong password" in r.data
+    r = client.post("/login", data={"password": "correct horse battery", "next": "/settings"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/settings")
+    assert client.get("/settings").status_code == 200
+    assert "HttpOnly" in r.headers["Set-Cookie"] and "SameSite=Lax" in r.headers["Set-Cookie"]
+    # A new password logs existing sessions out.
+    auth.set_password(data, "another long password")
+    assert client.get("/settings").status_code == 302
+    client.post("/login", data={"password": "another long password"})
+    client.post("/logout")
+    assert client.get("/").status_code == 302
+
+
+@pytest.mark.parametrize("nxt", ["https://evil.example/", "//evil.example/", "/\\evil.example"])
+def test_login_never_redirects_offsite(anon, nxt):
+    client, data = anon
+    auth.set_password(data, "correct horse battery")
+    r = client.post("/login", data={"password": "correct horse battery", "next": nxt})
+    assert r.headers["Location"] == "/"
+
+
+def test_login_rate_limited(anon):
+    client, data = anon
+    auth.set_password(data, "correct horse battery")
+    for _ in range(auth.MAX_FAILURES):
+        client.post("/login", data={"password": "wrong"}, headers={"CF-Connecting-IP": "1.2.3.4"})
+    r = client.post("/login", data={"password": "correct horse battery"}, headers={"CF-Connecting-IP": "1.2.3.4"})
+    assert b"Too many" in r.data
+    # Someone else isn't locked out.
+    r = client.post("/login", data={"password": "correct horse battery"}, headers={"CF-Connecting-IP": "5.6.7.8"})
+    assert r.status_code == 302
+
+
+def test_short_password_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        auth.set_password(tmp_path, "short")
+    assert auth.password_hash(tmp_path) == ""
 
 
 def test_pages_render(env):

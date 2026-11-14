@@ -29,6 +29,27 @@ def auth() -> None:
     print("Signed in. Uploads will start on the next cycle.")
 
 
+def set_password() -> None:
+    """`clipbot set-password`: set the web UI password (docker exec -it clip-bot clipbot set-password)."""
+    import getpass
+
+    from . import auth as webauth
+
+    data = config.data_dir()
+    while True:
+        pw = getpass.getpass(f"New web UI password (at least {webauth.MIN_LENGTH} characters): ")
+        if pw != getpass.getpass("Type it again: "):
+            print("Those didn't match, try again.")
+            continue
+        try:
+            webauth.set_password(data, pw)
+        except ValueError as exc:
+            print(f"Not saved: {exc}.")
+            continue
+        break
+    print("Password saved. Anyone logged in with the old one has to log in again.")
+
+
 def audit() -> None:
     """`clipbot audit`: list every uploaded clip and whether it was approved before it went up
     (docker exec clip-bot clipbot audit). Read-only."""
@@ -65,6 +86,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
         auth()
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "set-password":
+        set_password()
         return
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         audit()
